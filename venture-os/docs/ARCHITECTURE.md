@@ -148,6 +148,10 @@ Postgres roles created by `infra/postgres/init/01-bootstrap.sh`:
 1. Founder chats in the wizard (`web`) → `GenesisService.Converse` (unary ConnectRPC; streaming can be added later) in the control plane.
 2. The control plane drives the interview with an LLM, accumulating a draft `CompanyBlueprint`; every turn is
    re-validated against the JSON Schema + business rules (chart of accounts balances, margin floors ≥ 0, …).
+   A blueprint is also refused (and, in the interview, sent back to the model to repair) when any free-text value is not
+   one plain line within its length limit (`domain.Max*`), or when its agents' skills could not be generated
+   (`skillgen.Check`, which counts bytes). The text is copied into each agent's instruction file, so a line break could
+   otherwise forge a section of it, and a name over the database's 200 characters would fail only at approval.
 3. On founder approval the blueprint is frozen (content-hashed, stored in `company_blueprints`).
 4. `ProvisionerService.Provision` runs a saga — Keycloak org → Postgres rows → ERPNext company/CoA → CRM
    pipelines (verified against the built-in CRM) → LibreDesk inboxes/KB → Hermes profile + `SKILL.md` files — each

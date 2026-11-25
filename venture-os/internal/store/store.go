@@ -20,6 +20,7 @@ import (
 	"github.com/mrbiz/venture-os/internal/domain"
 	"github.com/mrbiz/venture-os/internal/ports"
 	"github.com/mrbiz/venture-os/internal/provisioner"
+	"github.com/mrbiz/venture-os/internal/skillgen"
 	"github.com/mrbiz/venture-os/internal/tenancy"
 )
 
@@ -292,6 +293,10 @@ type StoredBlueprint struct {
 // SaveBlueprint stores bp as the next DRAFT version for the tenant. Replaying key returns the existing row.
 func (s *PG) SaveBlueprint(ctx context.Context, tenant uuid.UUID, session *uuid.UUID, bp domain.Blueprint, createdBy, key string) (StoredBlueprint, error) {
 	if err := bp.Validate(); err != nil {
+		return StoredBlueprint{}, err
+	}
+	// Refuse now a blueprint whose skills could not be generated, rather than after the founder has approved it.
+	if err := skillgen.Check(bp); err != nil {
 		return StoredBlueprint{}, err
 	}
 	raw, err := bp.CanonicalJSON()

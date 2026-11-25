@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mrbiz/venture-os/internal/domain"
 	"github.com/mrbiz/venture-os/internal/ports"
@@ -61,6 +62,24 @@ func RenderAll(bp domain.Blueprint) ([]ports.Skill, error) {
 	return out, nil
 }
 
+// Check reports, as a *domain.ValidationError, why bp's agents' skills could not be generated (most often a skill over the
+// size limit, which counts bytes and so cannot be bounded by domain's character limits alone). It lets a blueprint be
+// refused when it is submitted, or sent back to the model for repair, instead of failing during provisioning after the
+// founder has approved it.
+func Check(bp domain.Blueprint) error {
+	_, err := RenderAll(bp)
+	if err == nil {
+		return nil
+	}
+	var ve *domain.ValidationError
+	if errors.As(err, &ve) {
+		return ve
+	}
+	return &domain.ValidationError{Problems: []string{
+		"the agents' skills could not be generated from this blueprint (" + err.Error() + "); shorten descriptions, responsibilities, workflows or knowledge-base titles",
+	}}
+}
+
 // Render renders the skill for a single agent of bp.
 func Render(bp domain.Blueprint, agentKey string) (ports.Skill, error) {
 	if err := bp.Validate(); err != nil {
@@ -84,9 +103,7 @@ func render(bp domain.Blueprint, a domain.Agent, bpHash [32]byte) (ports.Skill, 
 
 	desc := fmt.Sprintf("Operate as %s for %s (%s, %s). Use for: %s.",
 		a.RoleTitle, biz.Name, biz.Industry, biz.Country, strings.Join(a.Responsibilities, "; "))
-	if len(desc) > maxDescription {
-		desc = desc[:maxDescription-1] + "…"
-	}
+	desc = truncateBytes(desc, maxDescription)
 
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "name: %s\n", SkillName(a.Key))
@@ -220,6 +237,22 @@ func Lint(md string) error {
 		return fmt.Errorf("skill exceeds %d bytes", maxSkillBytes)
 	}
 	return nil
+}
+
+// truncateBytes shortens s to at most max BYTES, ending in an ellipsis when it had to cut. It cuts on a character boundary
+// (never in the middle of a multi-byte character) and counts the ellipsis's own three bytes, so the result always passes
+// Lint. Cutting at max-1 bytes and then appending the ellipsis, as this once did, produced max+2 bytes and made the skill
+// of any agent with wordy responsibilities fail its own lint during provisioning.
+func truncateBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	const ellipsis = "…"
+	cut := max - len(ellipsis)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + ellipsis
 }
 
 // q quotes a string as a YAML double-quoted scalar. JSON string syntax is a subset of YAML's.

@@ -34,6 +34,7 @@ BLUEPRINT SHAPE (all keys required unless marked optional; unknown keys are reje
 
 RULES FOR THE BLUEPRINT
 - Money is integer minor units (cents, paise). Rates and margins are basis points (1% = 100).
+- Every text value is ONE line of plain text: no line breaks or tabs. Keep the business name under 200 characters, the description under 2000, each responsibility under 300, and every other name, title, trigger or step under 100. Use at most 20 responsibilities per agent, 10 steps per workflow and 15 workflows. The agents' instruction files are generated from this text, so be concise.
 - The chart of accounts needs at least one ASSET, one REVENUE and one EXPENSE account, and must suit the industry and country.
 - Pricing rules configure a deterministic calculator; agents never invent prices. Choose margin floors that protect the founder, and set an approval threshold for large quotes.
 - The org chart has exactly one root agent, no cycles, and every agent has the "governance" tool. Grant each agent only the tools its job needs.

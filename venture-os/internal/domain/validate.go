@@ -6,9 +6,40 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+// Limits on what a blueprint may contain. They protect three things: the database (organizations.name is capped at 200
+// characters), the agents' instruction files (every free-text field below is copied into skill text, so it must be one
+// plain line and short enough that a skill stays within its size limit), and the founder, who has to be able to read what
+// they approve. Lengths are in characters. skillgen.Check is the exact renderability test; these keep ordinary
+// blueprints far from it.
+const (
+	MaxNameChars        = 200 // business name, account name: the database limit for organizations.name
+	MaxLabelChars       = 100 // industry, role title, channel, team, pricing rule, workflow name/trigger/step, ...
+	MaxSentenceChars    = 300 // one responsibility, one target customer, one offering
+	MaxDescriptionChars = 2000
+	MaxKBBodyChars      = 10000 // a knowledge-base article body may span lines; it is not copied into skills
+
+	MaxTargetCustomers = 20
+	MaxOfferings       = 30
+	MaxResponsibility  = 20 // responsibilities per agent
+	MaxAgents          = 30
+	MaxWorkflows       = 15
+	MaxWorkflowSteps   = 10
+	MaxPricingRules    = 20
+	MaxChannels        = 20
+	MaxKBDocs          = 40
+	MaxAccounts        = 200
+	MaxTaxRates        = 30
+	MaxPipelines       = 10
+	MaxStages          = 30
+	MaxCustomFields    = 30
 )
 
 var (
+	timezoneRe = regexp.MustCompile(`^[A-Za-z0-9_+/-]{1,64}$`)
 	slugRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$`)
 	currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
 	countryRe  = regexp.MustCompile(`^[A-Z]{2}$`)
@@ -57,9 +88,56 @@ func (v *validator) addf(format string, a ...any) {
 	v.problems = append(v.problems, fmt.Sprintf(format, a...))
 }
 
+// singleLine reports whether s has no line break, control character, or invisible format character (zero-width and bidi
+// controls). Text that fails it could start a new section when copied into an agent's skill, or hide from a reader.
+func singleLine(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029 {
+			return false
+		}
+	}
+	return true
+}
+
+// line checks one free-text value: one plain line, at most max characters.
+func (v *validator) line(field, s string, max int) {
+	if n := utf8.RuneCountInString(s); n > max {
+		v.addf("%s is %d characters; the limit is %d", field, n, max)
+	}
+	if !singleLine(s) {
+		v.addf("%s must be one line of plain text (no line breaks, tabs or control characters)", field)
+	}
+}
+
+// count checks how many items a list holds.
+func (v *validator) count(field string, n, max int) {
+	if n > max {
+		v.addf("%s has %d entries; the limit is %d", field, n, max)
+	}
+}
+
 func (v *validator) business(p BusinessProfile) {
 	if strings.TrimSpace(p.Name) == "" {
 		v.addf("business.name is required")
+	}
+	v.line("business.name", p.Name, MaxNameChars)
+	v.line("business.industry", p.Industry, MaxLabelChars)
+	v.line("business.description", p.Description, MaxDescriptionChars)
+	if p.Timezone != "" && !timezoneRe.MatchString(p.Timezone) {
+		v.addf("business.timezone %q must be an IANA time zone name such as Asia/Kolkata or UTC", p.Timezone)
+	}
+	v.count("business.target_customers", len(p.TargetCustomers), MaxTargetCustomers)
+	for i, c := range p.TargetCustomers {
+		v.line(fmt.Sprintf("business.target_customers[%d]", i), c, MaxSentenceChars)
+	}
+	v.count("business.offerings", len(p.Offerings), MaxOfferings)
+	for i, o := range p.Offerings {
+		v.line(fmt.Sprintf("business.offerings[%d].name", i), o.Name, MaxSentenceChars)
+		switch o.Kind {
+		case "PRODUCT", "SERVICE", "SUBSCRIPTION":
+		default:
+			v.addf("business.offerings[%d] %q has kind %q; use PRODUCT, SERVICE or SUBSCRIPTION", i, o.Name, o.Kind)
+		}
 	}
 	if !slugRe.MatchString(p.Slug) {
 		v.addf("business.slug %q must be 3-40 chars of a-z, 0-9 and '-', not starting or ending with '-'", p.Slug)
@@ -81,7 +159,14 @@ func (v *validator) accounting(a Accounting, baseCurrency string) {
 	}
 	codes := map[string]Account{}
 	seenType := map[AccountType]bool{}
+	v.count("accounting.chart_of_accounts", len(a.ChartOfAccounts), MaxAccounts)
+	v.count("accounting.tax.rates", len(a.Tax.Rates), MaxTaxRates)
+	v.line("accounting.tax.regime", a.Tax.Regime, MaxLabelChars)
+	for _, r := range a.Tax.Rates {
+		v.line(fmt.Sprintf("tax rate %q name", r.Code), r.Name, MaxLabelChars)
+	}
 	for _, acc := range a.ChartOfAccounts {
+		v.line(fmt.Sprintf("account %q name", acc.Code), acc.Name, MaxNameChars)
 		if !codeRe.MatchString(acc.Code) {
 			v.addf("account code %q is invalid", acc.Code)
 		}
@@ -163,7 +248,17 @@ func (v *validator) accounting(a Accounting, baseCurrency string) {
 
 func (v *validator) crm(c CRM) {
 	keys := map[string]bool{}
+	v.count("crm.pipelines", len(c.Pipelines), MaxPipelines)
 	for _, p := range c.Pipelines {
+		v.line(fmt.Sprintf("pipeline %q name", p.Key), p.Name, MaxLabelChars)
+		v.count(fmt.Sprintf("pipeline %q stages", p.Key), len(p.Stages), MaxStages)
+		v.count(fmt.Sprintf("pipeline %q custom fields", p.Key), len(p.CustomFields), MaxCustomFields)
+		for _, s := range p.Stages {
+			v.line(fmt.Sprintf("pipeline %q stage %q name", p.Key, s.Key), s.Name, MaxLabelChars)
+		}
+		for _, f := range p.CustomFields {
+			v.line(fmt.Sprintf("pipeline %q field %q label", p.Key, f.Key), f.Label, MaxLabelChars)
+		}
 		if !keyRe.MatchString(p.Key) {
 			v.addf("pipeline key %q is invalid", p.Key)
 		}
@@ -215,10 +310,12 @@ func (v *validator) pricing(rules []PricingRule) {
 		v.addf("pricing must define at least one rule (agents never invent prices)")
 	}
 	names := map[string]bool{}
+	v.count("pricing", len(rules), MaxPricingRules)
 	for _, r := range rules {
 		if strings.TrimSpace(r.Name) == "" {
 			v.addf("a pricing rule has no name")
 		}
+		v.line(fmt.Sprintf("pricing rule %q name", r.Name), r.Name, MaxLabelChars)
 		if names[r.Name] {
 			v.addf("duplicate pricing rule %q", r.Name)
 		}
@@ -249,7 +346,17 @@ func (v *validator) pricing(rules []PricingRule) {
 
 func (v *validator) support(s Support) {
 	slugs := map[string]bool{}
+	v.count("support.kb_docs", len(s.KBDocs), MaxKBDocs)
+	v.count("support.channels", len(s.Channels), MaxChannels)
+	for _, c := range s.Channels {
+		v.line(fmt.Sprintf("channel %q name", c.Name), c.Name, MaxLabelChars)
+		v.line(fmt.Sprintf("channel %q route_to_team", c.Name), c.RouteToTeam, MaxLabelChars)
+	}
 	for _, d := range s.KBDocs {
+		v.line(fmt.Sprintf("kb doc %q title", d.Slug), d.Title, MaxNameChars)
+		if n := utf8.RuneCountInString(d.Body); n > MaxKBBodyChars {
+			v.addf("kb doc %q body is %d characters; the limit is %d", d.Slug, n, MaxKBBodyChars)
+		}
 		if !slugRe.MatchString(d.Slug) {
 			v.addf("kb doc slug %q is invalid", d.Slug)
 		}
@@ -284,7 +391,13 @@ func (v *validator) agents(agents []Agent) {
 		return
 	}
 	known := map[string]Agent{}
+	v.count("agents", len(agents), MaxAgents)
 	for _, a := range agents {
+		v.line(fmt.Sprintf("agent %q role_title", a.Key), a.RoleTitle, MaxLabelChars)
+		v.count(fmt.Sprintf("agent %q responsibilities", a.Key), len(a.Responsibilities), MaxResponsibility)
+		for i, r := range a.Responsibilities {
+			v.line(fmt.Sprintf("agent %q responsibilities[%d]", a.Key, i), r, MaxSentenceChars)
+		}
 		if !agentKeyRe.MatchString(a.Key) {
 			v.addf("agent key %q is invalid", a.Key)
 		}
@@ -353,7 +466,14 @@ func (v *validator) agents(agents []Agent) {
 
 func (v *validator) workflows(ws []Workflow) {
 	keys := map[string]bool{}
+	v.count("workflows", len(ws), MaxWorkflows)
 	for _, w := range ws {
+		v.line(fmt.Sprintf("workflow %q name", w.Key), w.Name, MaxLabelChars)
+		v.line(fmt.Sprintf("workflow %q trigger", w.Key), w.Trigger, MaxLabelChars)
+		v.count(fmt.Sprintf("workflow %q steps", w.Key), len(w.Steps), MaxWorkflowSteps)
+		for i, s := range w.Steps {
+			v.line(fmt.Sprintf("workflow %q steps[%d]", w.Key, i), s, MaxLabelChars)
+		}
 		if !keyRe.MatchString(w.Key) {
 			v.addf("workflow key %q is invalid", w.Key)
 		}

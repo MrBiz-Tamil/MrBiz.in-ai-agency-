@@ -17,6 +17,7 @@ import (
 
 	"github.com/mrbiz/venture-os/internal/domain"
 	"github.com/mrbiz/venture-os/internal/ports"
+	"github.com/mrbiz/venture-os/internal/skillgen"
 )
 
 const (
@@ -191,12 +192,16 @@ func decodeBlueprint(raw json.RawMessage) (*domain.Blueprint, []string) {
 		return nil, []string{"blueprint JSON does not match the schema: " + err.Error()}
 	}
 	bp.SchemaVersion = domain.BlueprintSchemaVersion // the model is not asked to manage versioning
-	if err := bp.Validate(); err != nil {
-		var ve *domain.ValidationError
-		if errors.As(err, &ve) {
-			return nil, ve.Problems
+	// Validate the shape, then prove the agents' skills can actually be generated, so the model repairs a blueprint that
+	// is too large now and the founder never approves one that could not be provisioned.
+	for _, check := range []func(domain.Blueprint) error{domain.Blueprint.Validate, skillgen.Check} {
+		if err := check(bp); err != nil {
+			var ve *domain.ValidationError
+			if errors.As(err, &ve) {
+				return nil, ve.Problems
+			}
+			return nil, []string{err.Error()}
 		}
-		return nil, []string{err.Error()}
 	}
 	return &bp, nil
 }
