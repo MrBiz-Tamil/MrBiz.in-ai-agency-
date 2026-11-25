@@ -65,8 +65,10 @@ func TestSpendCapsBlockApprovalsThatWouldBreakThem(t *testing.T) {
 		if _, err := s.DecideApproval(ctx, tn, over.ID, false, "founder", "no", [32]byte{}); err != nil {
 			t.Fatalf("a rejection must not be blocked by a cap: %v", err)
 		}
-		if err := approve(queue(t, s, tn, "PAYMENT", 9_999, "USD", "pay-usd")); err != nil {
-			t.Fatalf("an INR cap must not limit USD: %v", err)
+		// Caps are in force, so a currency with no cap row must not be a way around them (an agent picks the currency).
+		var sc *store.SpendCapError
+		if err := approve(queue(t, s, tn, "PAYMENT", 9_999, "USD", "pay-usd")); !errors.As(err, &sc) || sc.Dimension != store.DimensionNoCap {
+			t.Fatalf("a payment in a currency with no cap while other caps exist must be blocked: %v", err)
 		}
 		if err := approve(queue(t, s, tn, "INVOICE", 9_999_999, "INR", "inv-1")); err != nil {
 			t.Fatalf("money coming in is not capped: %v", err)
@@ -117,8 +119,18 @@ func TestSpendCapsBlockApprovalsThatWouldBreakThem(t *testing.T) {
 	t.Run("removing a cap lifts it, and bad caps are refused", func(t *testing.T) {
 		cap(store.SpendCap{Currency: "GBP", PerTransaction: i64(1)})
 		cap(store.SpendCap{Currency: "GBP"}) // all nil: remove
+		// Other currencies in this business still have caps, so GBP is now "uncapped while caps exist": blocked.
+		if err := approve(queue(t, s, tn, "PAYMENT", 5_000_000, "GBP", "pay-gbp-blocked")); !errors.Is(err, store.ErrSpendCap) {
+			t.Fatalf("GBP has no cap but other currencies do: %v", err)
+		}
+		// Once the business has no caps at all, nothing is capped.
+		existing, err := s.SpendCaps(ctx, tn)
+		must(t, err)
+		for _, c := range existing {
+			cap(store.SpendCap{Currency: c.Currency})
+		}
 		must(t, approve(queue(t, s, tn, "PAYMENT", 5_000_000, "GBP", "pay-gbp")))
-		err := s.SetSpendCap(ctx, tn, store.SpendCap{Currency: "JPY", PerHour: i64(10), PerDay: i64(5), UpdatedBy: "f"})
+		err = s.SetSpendCap(ctx, tn, store.SpendCap{Currency: "JPY", PerHour: i64(10), PerDay: i64(5), UpdatedBy: "f"})
 		if !errors.Is(err, store.ErrConflict) {
 			t.Fatalf("an hourly cap above the daily cap is nonsense: %v", err)
 		}

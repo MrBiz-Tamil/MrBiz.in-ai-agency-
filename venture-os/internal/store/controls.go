@@ -28,7 +28,13 @@ type SpendCapError struct {
 	Requested int64
 }
 
+// DimensionNoCap is the Dimension of a SpendCapError raised because the business has caps but none for this currency.
+const DimensionNoCap = "no cap for this currency"
+
 func (e *SpendCapError) Error() string {
+	if e.Dimension == DimensionNoCap {
+		return fmt.Sprintf("spend cap: no cap is set for %s although the business has caps in other currencies", e.Currency)
+	}
 	if e.Dimension == "per transaction" {
 		return fmt.Sprintf("spend cap: %d %s minor units exceeds the per-transaction cap of %d", e.Requested, e.Currency, e.Cap)
 	}
@@ -103,7 +109,17 @@ func checkSpend(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, kind, currency
 	var perTx, perHour, perDay *int64
 	err := tx.QueryRow(ctx, `SELECT per_transaction_minor, per_hour_minor, per_day_minor FROM spend_caps WHERE tenant_id=$1 AND currency=$2`, tenant, currency).Scan(&perTx, &perHour, &perDay)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		// No cap for this currency. If the business has set caps in any other currency it is running with ceilings in
+		// force, and an uncapped currency would be a way around all of them (an agent chooses a PAYMENT's currency), so
+		// fail closed. A business that has set no caps at all is unrestricted, as before.
+		var capped int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM spend_caps WHERE tenant_id=$1`, tenant).Scan(&capped); err != nil {
+			return err
+		}
+		if capped == 0 {
+			return nil
+		}
+		return &SpendCapError{Currency: currency, Dimension: DimensionNoCap, Requested: *amount}
 	}
 	if err != nil {
 		return err

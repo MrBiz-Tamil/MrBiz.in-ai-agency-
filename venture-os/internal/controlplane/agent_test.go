@@ -359,6 +359,8 @@ func TestApprovingAnInvoicePostsTheLedgerExactlyOnce(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	// A duplicate click is either refused as already decided, or (when it lands between the other click's decision and
+	// its execution) it finishes the job instead; the invariant is that the side effect happens exactly once.
 	wins := 0
 	for _, err := range results {
 		if err == nil {
@@ -367,8 +369,8 @@ func TestApprovingAnInvoicePostsTheLedgerExactlyOnce(t *testing.T) {
 			t.Errorf("loser got %v", err)
 		}
 	}
-	if wins != 1 || executed != 1 {
-		t.Fatalf("wins=%d executed=%d, want exactly 1 each (%v)", wins, executed, results)
+	if wins < 1 || executed != 1 {
+		t.Fatalf("wins=%d executed=%d, want at least one success and exactly one execution (%v)", wins, executed, results)
 	}
 
 	// Dr receivable 1,180,562 / Cr revenue 1,124,345 / Cr GST payable 56,217; one scheduled receipt.

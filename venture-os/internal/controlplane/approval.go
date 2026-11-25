@@ -134,6 +134,11 @@ func (s *approvalSvc) DecideApproval(ctx context.Context, req *connect.Request[a
 	case errors.Is(err, store.ErrNotFound):
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("approval not found"))
 	case errors.Is(err, store.ErrAlreadyDecided):
+		// Approving again an approval whose execution never completed finishes the job instead of failing: the decision
+		// was already made on this exact payload, so only the side effect is outstanding.
+		if resp, ok := s.retryExecution(ctx, p.Sub, a, req.Msg.Approve, want); ok {
+			return connect.NewResponse(resp), nil
+		}
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("this request is already %s", strings.ToLower(strings.ReplaceAll(a.Status, "_", " "))))
 	case errors.Is(err, store.ErrHashMismatch):
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("the request changed since you reviewed it; reload and review again"))
@@ -155,9 +160,43 @@ func (s *approvalSvc) DecideApproval(ctx context.Context, req *connect.Request[a
 	if !req.Msg.Approve {
 		return connect.NewResponse(resp), nil
 	}
-	out := s.execute(ctx, a)
+	out := s.executeDetached(ctx, a)
 	resp.Status, resp.Executed, resp.ExecutionResultJson, resp.ExecutionError = out.status, out.executed, out.result, out.errMsg
 	return connect.NewResponse(resp), nil
+}
+
+// executionBudget bounds one execution. It is well inside store.ExecutionLease.
+const executionBudget = 2 * time.Minute
+
+// executeDetached runs execute without the request's cancellation. The decision is already committed, so a client that
+// disconnects (a closed tab, a proxy timeout) must not abandon the side effect half-way and leave the approval stuck.
+func (s *Server) executeDetached(ctx context.Context, a store.Approval) execOutcome {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionBudget)
+	defer cancel()
+	return s.execute(ctx, a)
+}
+
+// retryExecution handles a repeated "approve" for an approval that was decided but whose execution is APPROVED (never
+// started), FAILED, or EXECUTING under an expired lease. It re-runs only when the caller presents the stored payload
+// hash, and only for kinds that have an executor. It reports ok=false when the repeat is not such a retry.
+func (s *Server) retryExecution(ctx context.Context, by string, a store.Approval, approve bool, want [32]byte) (*approvalv1.DecideApprovalResponse, bool) {
+	if !approve || a.PayloadHash != want {
+		return nil, false
+	}
+	switch a.Status {
+	case "APPROVED", "FAILED", "EXECUTING":
+	default:
+		return nil, false
+	}
+	if _, ok := executors[a.Kind]; !ok {
+		return nil, false
+	}
+	out := s.executeDetached(ctx, a)
+	if out.status == "EXECUTING" && !out.executed && out.errMsg == "" {
+		return nil, false // someone else holds a live claim: this repeat is a plain duplicate, not a retry
+	}
+	_ = s.Repo.AuditUser(ctx, a.TenantID, by, "approval.execute_retry", "approval", a.ID.String(), map[string]any{"kind": a.Kind, "from": a.Status, "to": out.status})
+	return &approvalv1.DecideApprovalResponse{Status: out.status, Executed: out.executed, ExecutionResultJson: out.result, ExecutionError: out.errMsg}, true
 }
 
 // ───────────────────────────── execution ─────────────────────────────
@@ -206,7 +245,7 @@ func (s *Server) execute(ctx context.Context, a store.Approval) execOutcome {
 	}
 	if err := s.Repo.FinishExecution(ctx, a.TenantID, a.ID, true, result); err != nil {
 		s.log().Error("record execution", "approval", a.ID, "err", err)
-		return execOutcome{status: "EXECUTING", result: result, errMsg: "executed but the outcome could not be recorded; it is safe to retry"}
+		return execOutcome{status: "EXECUTING", result: result, errMsg: "executed but the outcome could not be recorded; approve again in a few minutes to finish recording it (repeating it is safe)"}
 	}
 	return execOutcome{status: "EXECUTED", executed: true, result: result}
 }
@@ -303,6 +342,10 @@ func executeQuote(_ context.Context, _ *Server, _ store.Approval) (json.RawMessa
 
 // spendCapMessage says, in money, which ceiling an approval would break and what to do about it.
 func spendCapMessage(e *store.SpendCapError) string {
+	if e.Dimension == store.DimensionNoCap {
+		return fmt.Sprintf("Blocked by the spend cap: this business has spend caps but none for %s, so a %s payment cannot be checked against a ceiling. Nothing was approved. A founder can set a %s cap first (a high one if it should be effectively unlimited).",
+			e.Currency, financeengine.FormatMinor(e.Requested, e.Currency), e.Currency)
+	}
 	if e.Dimension == "per transaction" {
 		return fmt.Sprintf("Blocked by the spend cap: %s is more than the per-transaction cap of %s. Nothing was approved. A founder can raise the cap first.",
 			financeengine.FormatMinor(e.Requested, e.Currency), financeengine.FormatMinor(e.Cap, e.Currency))

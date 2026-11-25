@@ -123,8 +123,16 @@ func (s *Server) now() time.Time {
 
 const maxKeyLen = 200
 
+// maxRequestBytes caps every request message. Connect parses the message before the auth interceptor runs, so without a
+// cap an unauthenticated caller could make the server buffer and parse an arbitrarily large body. The largest legitimate
+// request is a few tens of KiB (a 64 KiB tool-argument or secret field), so 1 MiB leaves ample room.
+const maxRequestBytes = 1 << 20
+
 // Handler returns an http.Handler serving every service plus /healthz, with authentication applied.
 func (s *Server) Handler(v auth.Verifier, opts ...connect.HandlerOption) http.Handler {
+	// The size cap goes first so a caller-supplied option can still override it.
+	size := connect.WithReadMaxBytes(maxRequestBytes)
+	opts = append([]connect.HandlerOption{size}, opts...)
 	opts = append(opts, connect.WithInterceptors(auth.Interceptor(v)))
 	mux := http.NewServeMux()
 	mux.Handle(tenantv1connect.NewTenantServiceHandler(&tenantSvc{s}, opts...))
@@ -137,7 +145,7 @@ func (s *Server) Handler(v auth.Verifier, opts ...connect.HandlerOption) http.Ha
 	mux.Handle(portfoliov1connect.NewPortfolioServiceHandler(&portfolioSvc{s}, opts...))
 	if s.AgentSigner != nil {
 		// Agents authenticate with MCP tokens, never with a user's OIDC session.
-		mux.Handle(agentv1connect.NewAgentServiceHandler(&agentSvc{s}, connect.WithInterceptors(mcpInterceptor(s.AgentSigner))))
+		mux.Handle(agentv1connect.NewAgentServiceHandler(&agentSvc{s}, size, connect.WithInterceptors(mcpInterceptor(s.AgentSigner))))
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	return mux

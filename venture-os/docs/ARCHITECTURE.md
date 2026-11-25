@@ -420,7 +420,14 @@ rolling day, any of which may be absent. Only approved `PAYMENT` and `PURCHASE_O
 totals; pending and rejected ones do not. The check runs **inside the `DecideApproval` transaction under a per-tenant
 advisory lock**, so two approvers clicking at once cannot both fit under a cap that only one fits under. A refusal
 applies to founders too, names the limit that tripped, and leaves the item pending. Limits must be ordered (payment
-at most hour at most day) and every change is audited.
+at most hour at most day) and every change is audited. Once a business has set a cap in any currency, an approval in a
+currency with **no** cap row is refused too (an agent chooses a `PAYMENT`'s currency, so an uncapped currency would otherwise
+bypass every ceiling); a business with no caps at all is unrestricted. `CAMPAIGN` and `OTHER` approvals are not capped.
+
+**Approval execution.** An approved item runs its executor once, detached from the request (a closed tab cannot abandon it
+half-way). If it never started, failed, or crashed holding the claim (an `EXECUTING` claim older than `store.ExecutionLease`,
+5 minutes), approving again with the same payload hash finishes it; executors are idempotent. A live claim is never
+taken over. Every request message is capped at 1 MiB before it is parsed.
 
 **Audit chain.** A trigger computes each row's hash from the previous row's hash and length-prefixed canonical fields,
 per tenant, under an advisory lock, so concurrent writers cannot fork the chain. `audit_verify()` walks it and returns

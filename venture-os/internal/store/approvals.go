@@ -205,13 +205,23 @@ func (s *PG) DecideApproval(ctx context.Context, tenant, id uuid.UUID, approve b
 	return a, err
 }
 
-// ClaimExecution atomically moves an APPROVED (or previously FAILED) approval to EXECUTING. Only one caller can win,
-// which is what makes execution at-most-once-at-a-time.
+// ExecutionLease is how long an EXECUTING claim is respected. A claim older than this belongs to a run that crashed (or
+// lost its connection) before recording an outcome, so it may be taken over. It must comfortably exceed the time one
+// execution is allowed to take (controlplane.executionBudget). Executors are idempotent, so a takeover that overlaps a
+// slow original run cannot duplicate its effects.
+const ExecutionLease = 5 * time.Minute
+
+// ClaimExecution atomically moves an APPROVED (or previously FAILED) approval to EXECUTING, or takes over an EXECUTING
+// claim whose lease has expired. Only one caller can win, which is what makes execution at-most-once-at-a-time.
 func (s *PG) ClaimExecution(ctx context.Context, tenant, id uuid.UUID) (bool, error) {
 	var won bool
 	err := s.tenantTx(ctx, tenant, func(tx pgx.Tx) error {
+		// updated_at is refreshed by the approval_queue trigger on every update, so it marks when the claim was taken.
 		ct, err := tx.Exec(ctx,
-			`UPDATE approval_queue SET status='EXECUTING' WHERE tenant_id=$1 AND id=$2 AND status IN ('APPROVED','FAILED')`, tenant, id)
+			`UPDATE approval_queue SET status='EXECUTING'
+			  WHERE tenant_id=$1 AND id=$2
+			    AND (status IN ('APPROVED','FAILED') OR (status='EXECUTING' AND updated_at < now() - $3::interval))`,
+			tenant, id, fmt.Sprintf("%d seconds", int(ExecutionLease.Seconds())))
 		won = err == nil && ct.RowsAffected() == 1
 		return err
 	})
