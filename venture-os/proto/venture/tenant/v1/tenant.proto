@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package venture.tenant.v1;
+
+// TenantService manages the businesses (tenants) a founder owns: the data behind the portfolio switcher.
+service TenantService {
+  // CreateBusiness starts a new draft business. Idempotent per (caller, idempotency_key).
+  rpc CreateBusiness(CreateBusinessRequest) returns (CreateBusinessResponse);
+  // ListBusinesses returns every business the caller belongs to.
+  rpc ListBusinesses(ListBusinessesRequest) returns (ListBusinessesResponse);
+}
+
+message CreateBusinessRequest {
+  string idempotency_key = 1;
+}
+
+message CreateBusinessResponse {
+  string tenant_id = 1;
+  // created is false when the idempotency key was replayed.
+  bool created = 2;
+}
+
+message ListBusinessesRequest {}
+
+message Business {
+  string tenant_id = 1;
+  string slug = 2;
+  string name = 3;
+  // status is DRAFT, PROVISIONING, ACTIVE, SUSPENDED or ARCHIVED.
+  string status = 4;
+  // role is the caller's role in this business: founder, approver or viewer.
+  string role = 5;
+  string industry = 6;
+  string country = 7;
+  string base_currency = 8;
+}
+
+message ListBusinessesResponse {
+  repeated Business businesses = 1;
+}

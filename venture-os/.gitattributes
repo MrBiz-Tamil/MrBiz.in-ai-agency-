@@ -1,0 +1,9 @@
+# Scripts and mounted configs run inside Linux containers: CRLF would break them.
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+Caddyfile text eol=lf
+Dockerfile* text eol=lf
+*.Dockerfile text eol=lf

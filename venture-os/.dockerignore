@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+web/node_modules
+web/build
+web/.svelte-kit
+infra
+docs
+*.md

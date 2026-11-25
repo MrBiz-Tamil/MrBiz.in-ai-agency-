@@ -1,0 +1,66 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ai-service",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "Set-Location 'D:\\Project Files\\Mrbiz.in\\ai-service'; $env:ABOS_ENV='dev'; .\\.venv\\Scripts\\python.exe grpc_server\\server.py"
+      ],
+      "port": 50051
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "Set-Location 'D:\\Project Files\\Mrbiz.in\\backend-core'; $env:ABOS_ENV='dev'; $env:ABOS_DB_ROLE='abos_app'; $env:DATABASE_URL='postgres://postgres@127.0.0.1:25432/postgres?sslmode=disable&pool_max_conns=1&default_query_exec_mode=describe_exec'; go run ./cmd/server"
+      ],
+      "port": 8080
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "D:\\Project Files\\Mrbiz.in\\frontend",
+        "run",
+        "dev"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "venture-web",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "Set-Location 'D:/Project Files/Mrbiz.in/venture-os/web'; $env:AUTH_MODE='dev'; $env:CONTROLPLANE_URL='http://127.0.0.1:8080'; $env:ORIGIN='http://127.0.0.1:5190'; $env:SESSION_SECRET='dev-only-session-secret-0123456789abcdef'; $env:VENTURE_CONNECTORS='fake'; $env:VENTURE_CONNECTOR_CRM='real'; npm run dev"
+      ],
+      "port": 5190
+    },
+    {
+      "name": "venture-web-viewer",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "Set-Location 'D:/Project Files/Mrbiz.in/venture-os/web'; $env:AUTH_MODE='dev'; $env:CONTROLPLANE_URL='http://127.0.0.1:8080'; $env:ORIGIN='http://127.0.0.1:5191'; $env:SESSION_SECRET='dev-only-session-secret-0123456789abcdef'; $env:VENTURE_CONNECTORS='fake'; $env:VENTURE_CONNECTOR_CRM='real'; $env:DEV_USER='viewer'; $env:VITE_DEV_PORT='5191'; npm run dev"
+      ],
+      "port": 5191
+    },
+    {
+      "name": "venture-web-approver",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "Set-Location 'D:/Project Files/Mrbiz.in/venture-os/web'; $env:AUTH_MODE='dev'; $env:CONTROLPLANE_URL='http://127.0.0.1:8080'; $env:ORIGIN='http://127.0.0.1:5192'; $env:SESSION_SECRET='dev-only-session-secret-0123456789abcdef'; $env:VENTURE_CONNECTORS='fake'; $env:VENTURE_CONNECTOR_CRM='real'; $env:DEV_USER='approver'; $env:VITE_DEV_PORT='5192'; npm run dev"
+      ],
+      "port": 5192
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package venture.provisioner.v1;
+
+// ProvisionerService turns an approved blueprint into a live tenant across every module.
+service ProvisionerService {
+  // Provision runs (or replays, or resumes) provisioning. Idempotent per idempotency_key: repeating a finished
+  // command returns the stored outcome without touching any external system.
+  rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+  // GetStatus returns the tenant's most recent provisioning run.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+}
+
+message ProvisionRequest {
+  string tenant_id = 1;
+  string blueprint_id = 2;
+  string idempotency_key = 3;
+}
+
+message Step {
+  string key = 1;
+  // status is PENDING, RUNNING, SUCCEEDED, FAILED, COMPENSATED or COMPENSATION_FAILED.
+  string status = 2;
+  int32 attempts = 3;
+  string error = 4;
+}
+
+message ProvisionResponse {
+  string run_id = 1;
+  string status = 2;
+  bool replayed = 3;
+  repeated Step steps = 4;
+  int64 elapsed_ms = 5;
+}
+
+message GetStatusRequest {
+  string tenant_id = 1;
+}
+
+message GetStatusResponse {
+  string run_id = 1;
+  // status is PENDING, RUNNING, SUCCEEDED, FAILED, COMPENSATING, ROLLED_BACK or COMPENSATION_FAILED.
+  string status = 2;
+  string error = 3;
+  repeated Step steps = 4;
+}

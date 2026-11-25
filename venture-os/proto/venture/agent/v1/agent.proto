@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package venture.agent.v1;
+
+// AgentService is the control-plane API behind the MCP bus. It is NOT for browsers: every call must carry an MCP
+// bearer token (internal/mcptoken) and the tenant is taken from that token alone. No request message has a tenant
+// field, so an agent cannot name another tenant.
+//
+// All money is integer minor units. Every number returned is computed by deterministic code; agents quote it, they
+// never calculate it.
+service AgentService {
+  // ListPricingRules returns the tenant's active pricing rules (names, models, margin floors, formulas).
+  rpc ListPricingRules(ListPricingRulesRequest) returns (ListPricingRulesResponse);
+  // CalculatePrice prices an offer under a rule. Read-only.
+  rpc CalculatePrice(CalculatePriceRequest) returns (CalculatePriceResponse);
+  // ForecastCashFlow projects the cash position from the ledger balance and scheduled cash movements. Read-only.
+  rpc ForecastCashFlow(ForecastCashFlowRequest) returns (ForecastCashFlowResponse);
+  // CreateQuote prices an offer and queues the quote for founder approval. Nothing is sent to the customer.
+  rpc CreateQuote(CreateQuoteRequest) returns (CreateQuoteResponse);
+  // DraftInvoice computes an invoice and queues it for founder approval. Nothing is posted or sent until approved.
+  rpc DraftInvoice(DraftInvoiceRequest) returns (DraftInvoiceResponse);
+  // DraftPurchaseOrder computes a purchase order and queues it for founder approval.
+  rpc DraftPurchaseOrder(DraftPurchaseOrderRequest) returns (DraftPurchaseOrderResponse);
+  // RequestApproval queues a free-form request (payments, campaigns, skill changes, other). Quotes, invoices and
+  // purchase orders must use the typed methods above so their numbers come from the finance engine.
+  rpc RequestApproval(RequestApprovalRequest) returns (RequestApprovalResponse);
+  // EscalateBlocker tells the founder the agent cannot proceed.
+  rpc EscalateBlocker(EscalateBlockerRequest) returns (EscalateBlockerResponse);
+  // GetApprovalStatus reports where a previously queued request stands.
+  rpc GetApprovalStatus(GetApprovalStatusRequest) returns (GetApprovalStatusResponse);
+  // CRMOperation runs one crm_ops operation (find, create, update, move, log activity ...) on the tenant's CRM.
+  // The operations, their argument schemas and their policy are defined once, in internal/crmops; the arguments are
+  // JSON decoded strictly there (unknown keys are rejected). Writes are attributed to the calling agent and audited.
+  rpc CRMOperation(CRMOperationRequest) returns (CRMOperationResponse);
+  // CollabOperation runs one meetings_ops or notes_ops operation (calendar, Google Meet, Zoom, Notion). Anything that
+  // would email other people is returned as a queued MEETING approval instead of being done. Defined once in internal/collabops.
+  rpc CollabOperation(CollabOperationRequest) returns (CollabOperationResponse);
+}
+
+message PricingRule {
+  string name = 1;
+  string model = 2;
+  string currency = 3;
+  int32 margin_floor_bps = 4;
+  // margin_target_bps is 0 when the rule has no explicit target (the floor is used).
+  int32 margin_target_bps = 5;
+  // approval_threshold_minor is 0 when quotes never need approval for size alone.
+  int64 approval_threshold_minor = 6;
+  // formula_json documents what the rule expects (tiers, incoterms, ...).
+  bytes formula_json = 7;
+}
+
+message ListPricingRulesRequest {}
+
+message ListPricingRulesResponse {
+  repeated PricingRule rules = 1;
+}
+
+message CalculatePriceRequest {
+  string rule_name = 1;
+  // input_json is the model-specific pricing input (see the tool schema).
+  bytes input_json = 2;
+}
+
+message CalculatePriceResponse {
+  // result_json is the engine's quote: components, cost, price, margin, floor check, approval flags.
+  bytes result_json = 1;
+}
+
+message ForecastCashFlowRequest {
+  int32 days = 1;
+  int32 bucket_days = 2;
+  bool include_forecast_inflows = 3;
+}
+
+message ForecastCashFlowResponse {
+  bytes forecast_json = 1;
+  string currency = 2;
+}
+
+message CreateQuoteRequest {
+  string rule_name = 1;
+  bytes input_json = 2;
+  string customer = 3;
+  // valid_days is how long the quote stays valid once released (1-90).
+  int32 valid_days = 4;
+  string note = 5;
+  // idempotency_key must be stable across retries of the same intent.
+  string idempotency_key = 6;
+}
+
+message DocumentLine {
+  string description = 1;
+  int64 quantity = 2;
+  int64 unit_price_minor = 3;
+}
+
+message DocumentDraft {
+  // counterparty is the customer (invoice) or supplier (purchase order).
+  string counterparty = 1;
+  repeated DocumentLine lines = 2;
+  // tax_code must be one of the tenant's configured tax rate codes.
+  string tax_code = 3;
+  // due_in_days is the payment term (0-365): when the money moves.
+  int32 due_in_days = 4;
+  string reference = 5;
+  string idempotency_key = 6;
+}
+
+message Document {
+  string approval_id = 1;
+  // status is the approval status, PENDING_APPROVAL for a new request.
+  string status = 2;
+  // computed_json holds the engine's totals / quote: these are the only numbers that may be quoted.
+  bytes computed_json = 3;
+  bool created = 4;
+}
+
+message RequestApprovalRequest {
+  // kind is PAYMENT, CAMPAIGN, AGENT_SKILL or OTHER.
+  string kind = 1;
+  string title = 2;
+  string summary = 3;
+  bytes payload_json = 4;
+  // amount_minor and currency go together; both unset when the request has no amount.
+  int64 amount_minor = 5;
+  string currency = 6;
+  // risk_level is LOW, MEDIUM or HIGH.
+  string risk_level = 7;
+  string idempotency_key = 8;
+}
+
+message EscalateBlockerRequest {
+  string title = 1;
+  string details = 2;
+  // severity is LOW, MEDIUM or HIGH.
+  string severity = 3;
+  string idempotency_key = 4;
+}
+
+message GetApprovalStatusRequest {
+  string approval_id = 1;
+}
+
+message ApprovalState {
+  string approval_id = 1;
+  string status = 2;
+  string decision_note = 3;
+  bool created = 4;
+}
+
+message CreateQuoteResponse {
+  Document document = 1;
+}
+
+message DraftInvoiceRequest {
+  DocumentDraft draft = 1;
+}
+
+message DraftInvoiceResponse {
+  Document document = 1;
+}
+
+message DraftPurchaseOrderRequest {
+  DocumentDraft draft = 1;
+}
+
+message DraftPurchaseOrderResponse {
+  Document document = 1;
+}
+
+message RequestApprovalResponse {
+  ApprovalState approval = 1;
+}
+
+message EscalateBlockerResponse {
+  ApprovalState approval = 1;
+}
+
+message GetApprovalStatusResponse {
+  ApprovalState approval = 1;
+}
+
+message CRMOperationRequest {
+  // One of the names in internal/crmops (crm_find_deals, crm_move_deal, ...).
+  string operation = 1;
+  // The operation's arguments as a JSON object.
+  bytes args_json = 2;
+}
+
+message CRMOperationResponse {
+  bytes result_json = 1;
+}
+
+message CollabOperationRequest {
+  string operation = 1;
+  bytes args_json = 2;
+}
+
+message CollabOperationResponse {
+  bytes result_json = 1;
+}

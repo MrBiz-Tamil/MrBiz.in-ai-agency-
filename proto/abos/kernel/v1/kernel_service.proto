@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package abos.kernel.v1;
+
+option go_package = "github.com/mrbiz/abos/backend-core/pkg/gen/kernel/v1;kernelv1";
+
+service KernelExecutionService {
+  // Executes an MCP tool securely through the Go Gateway with deterministic checks
+  rpc ExecuteTool (ExecuteToolRequest) returns (ExecuteToolResponse);
+
+  // Verifies and locks idempotency key before performing operations
+  rpc AcquireIdempotencyLock (AcquireIdempotencyLockRequest) returns (AcquireIdempotencyLockResponse);
+
+  // Checks and records token/API expenditures against agent budget circuit breakers
+  rpc EvaluateBudget (EvaluateBudgetRequest) returns (EvaluateBudgetResponse);
+
+  // Logs an immutable Decision X-Ray audit record
+  rpc RecordAuditLog (RecordAuditLogRequest) returns (RecordAuditLogResponse);
+
+  // Creates (or replays, by idempotency key) an execution ticket and runs it through the
+  // policy gate. The ticket may end up QUEUED, PENDING_APPROVAL, COMPLETED or FAILED.
+  rpc CreateTicket (CreateTicketRequest) returns (CreateTicketResponse);
+}
+
+message CreateTicketRequest {
+  string workspace_id = 1;
+  string agent_id = 2;          // optional: the agent definition this ticket is assigned to
+  string idempotency_key = 3;
+  string action_type = 4;
+  string payload_json = 5;
+  int32 priority = 6;           // optional, 1 (highest) .. 9; default 5
+}
+
+message CreateTicketResponse {
+  string ticket_id = 1;
+  string status = 2;            // QUEUED | PENDING_APPROVAL | CONFLICT_HOLD | RUNNING | COMPLETED | FAILED
+  string error_message = 3;
+}
+
+message ExecuteToolRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  string ticket_id = 3;
+  string idempotency_key = 4;
+  string tool_name = 5;
+  string payload_json = 6;
+}
+
+message ExecuteToolResponse {
+  bool success = 1;
+  string status = 2; // "EXECUTED", "PENDING_APPROVAL", "CONFLICT_HOLD"
+  string result_json = 3;
+  string error_message = 4;
+}
+
+message AcquireIdempotencyLockRequest {
+  string workspace_id = 1;
+  string idempotency_key = 2;
+  int64 ttl_ms = 3;
+}
+
+message AcquireIdempotencyLockResponse {
+  bool acquired = 1;
+  bool is_replayed = 2;
+  string cached_result_json = 3;
+}
+
+message EvaluateBudgetRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  double estimated_cost_usd = 3;
+}
+
+message EvaluateBudgetResponse {
+  bool allowed = 1;
+  double spent_today_usd = 2;
+  double daily_limit_usd = 3;
+  bool is_circuit_broken = 4;
+}
+
+message RecordAuditLogRequest {
+  string workspace_id = 1;
+  string ticket_id = 2;
+  int32 step_number = 3;
+  string tool_name = 4;
+  string input_sanitized = 5;
+  string output_sanitized = 6;
+  string policy_decision = 7;
+  double token_cost = 8;
+  int32 latency_ms = 9;
+}
+
+message RecordAuditLogResponse {
+  bool recorded = 1;
+  int64 log_id = 2;
+}

@@ -1,0 +1,10 @@
+# Base Hermes configuration, mounted at /opt/data/config.yaml (HERMES_HOME).
+# The only tool surface granted to agents is the tenant-scoped Venture OS MCP bus. The bus derives tenant_id
+# from the bearer token, so a profile can only ever act inside the tenant whose token it carries.
+# ${VENTURE_MCP_TOKEN} is resolved by Hermes at connect time from the container environment; per-tenant
+# profiles written by the control plane override it with that tenant's own token.
+mcp_servers:
+  venture:
+    url: "http://mcpbus:8090/mcp"
+    headers:
+      Authorization: "Bearer ${VENTURE_MCP_TOKEN}"

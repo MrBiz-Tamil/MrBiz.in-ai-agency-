@@ -1,0 +1,9 @@
+# TypeScript stubs for the Command Center (messages + service descriptors, protobuf-es v2).
+# Run via `npm run gen` in web/ (needs buf on PATH; scripts/gen-proto.* installs a pinned one into ./bin).
+version: v2
+plugins:
+  - local: protoc-gen-es
+    out: web/src/lib/gen
+    opt:
+      - target=ts
+      - import_extension=none

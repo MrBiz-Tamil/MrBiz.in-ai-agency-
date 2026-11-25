@@ -1,0 +1,53 @@
+# Single edge for the whole stack. SCHEME / BASE_DOMAIN come from the container environment.
+#   SCHEME=http   -> plain HTTP (local development; *.localhost is treated as a secure context by browsers)
+#   SCHEME=https  -> Caddy obtains and renews certificates automatically (public DNS required)
+# mcpbus, hermes, postgres and redis are intentionally not routable from here.
+
+(security_headers) {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+{$SCHEME}://app.{$BASE_DOMAIN} {
+	import security_headers
+	header X-Frame-Options DENY
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+# The control plane (ConnectRPC) is deliberately NOT routed here: the Command Center server calls it over the
+# internal network, so neither founders' OIDC tokens nor agents' MCP tokens ever need a public API surface.
+# To expose it to your own tooling, add an `api.` site block proxying to controlplane:8080 (h2c upstream).
+
+{$SCHEME}://auth.{$BASE_DOMAIN} {
+	import security_headers
+	# Keycloak's health and metrics live on the management port (9000); never expose them here.
+	@internal path /health* /metrics*
+	respond @internal 404
+	reverse_proxy keycloak:8080 {
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+{$SCHEME}://crm.{$BASE_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy twenty-server:3000
+}
+
+{$SCHEME}://support.{$BASE_DOMAIN} {
+	import security_headers
+	reverse_proxy libredesk:9000 {
+		# LibreDesk trusts this header for the client IP, so overwrite whatever the client sent.
+		header_up X-Client-IP {remote_host}
+	}
+}
+
+{$SCHEME}://erp.{$BASE_DOMAIN} {
+	import security_headers
+	# Frappe selects the site from the Host header, which Caddy forwards unchanged.
+	reverse_proxy erp-frontend:8080
+}

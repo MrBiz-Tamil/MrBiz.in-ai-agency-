@@ -1,0 +1,105 @@
+{
+  "realm": "venture",
+  "displayName": "Venture OS",
+  "enabled": true,
+  "sslRequired": "external",
+  "organizationsEnabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "accessTokenLifespan": 600,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 86400,
+  "passwordPolicy": "length(12) and notUsername",
+  "roles": {
+    "realm": [
+      { "name": "founder",  "description": "Chairman: full access to every business they belong to, and the approval queue." },
+      { "name": "approver", "description": "Can approve or reject items in the approval queue for their businesses." },
+      { "name": "viewer",   "description": "Read-only access to dashboards and reports." }
+    ]
+  },
+  "defaultRole": {
+    "name": "default-roles-venture",
+    "description": "Default realm role",
+    "composite": true,
+    "composites": { "realm": ["offline_access", "uma_authorization"] }
+  },
+  "clients": [
+    {
+      "clientId": "venture-web",
+      "name": "Venture OS Command Center",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "rootUrl": "${VENTURE_APP_URL}",
+      "baseUrl": "/",
+      "redirectUris": ["${VENTURE_APP_URL}/*"],
+      "webOrigins": ["${VENTURE_APP_URL}"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${VENTURE_APP_URL}/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "venture-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "venture-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "venture-api",
+      "name": "Venture OS API (audience)",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "venture-service",
+      "name": "Venture OS control plane (service account)",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_SERVICE_CLIENT_SECRET}",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-venture-service",
+      "enabled": true,
+      "serviceAccountClientId": "venture-service",
+      "clientRoles": {
+        "realm-management": ["manage-realm", "view-realm", "manage-users", "view-users", "query-users"]
+      }
+    },
+    {
+      "username": "${FOUNDER_EMAIL}",
+      "email": "${FOUNDER_EMAIL}",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Founder",
+      "lastName": "Chairman",
+      "realmRoles": ["founder", "approver"],
+      "credentials": [
+        { "type": "password", "value": "${FOUNDER_INITIAL_PASSWORD}", "temporary": true }
+      ]
+    }
+  ]
+}

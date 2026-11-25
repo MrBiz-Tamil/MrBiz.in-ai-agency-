@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package venture.approval.v1;
+
+// ApprovalService is the founder's Global Approval Inbox: everything agents queued, across every business the
+// caller can approve for, and the one-click decision.
+service ApprovalService {
+  // ListApprovals returns approvals across all of the caller's businesses (or one, if tenant_id is set).
+  rpc ListApprovals(ListApprovalsRequest) returns (ListApprovalsResponse);
+  // GetApproval returns one approval with its full payload.
+  rpc GetApproval(GetApprovalRequest) returns (GetApprovalResponse);
+  // DecideApproval approves or rejects. Approving executes the request exactly once.
+  rpc DecideApproval(DecideApprovalRequest) returns (DecideApprovalResponse);
+}
+
+message ApprovalSummary {
+  string tenant_id = 1;
+  string business_name = 2;
+  string approval_id = 3;
+  string kind = 4;
+  string status = 5;
+  string title = 6;
+  string summary = 7;
+  string requested_by = 8;
+  string risk_level = 9;
+  // amount_minor / currency are unset (0 / "") when the request has no amount.
+  int64 amount_minor = 10;
+  string currency = 11;
+  string created_at = 12; // RFC 3339
+}
+
+message ListApprovalsRequest {
+  // tenant_id restricts the inbox to one business. Empty = all.
+  string tenant_id = 1;
+  // status filters by approval status. Empty = PENDING_APPROVAL.
+  string status = 2;
+  int32 limit = 3; // default 50, max 200
+}
+
+message ListApprovalsResponse {
+  repeated ApprovalSummary approvals = 1;
+}
+
+message GetApprovalRequest {
+  string tenant_id = 1;
+  string approval_id = 2;
+}
+
+message GetApprovalResponse {
+  ApprovalSummary approval = 1;
+  bytes payload_json = 2;
+  // payload_hash is the hex sha256 of the payload: send it back when deciding to approve exactly what you saw.
+  string payload_hash = 3;
+  string decided_by = 4;
+  string decision_note = 5;
+  bytes execution_result_json = 6;
+}
+
+message DecideApprovalRequest {
+  string tenant_id = 1;
+  string approval_id = 2;
+  // approve=true approves, false rejects.
+  bool approve = 3;
+  string note = 4;
+  // payload_hash is required when approving and must match the stored payload.
+  string payload_hash = 5;
+}
+
+message DecideApprovalResponse {
+  string status = 1;
+  // executed is true when approving also ran the action. Kinds without an executor stay APPROVED.
+  bool executed = 2;
+  bytes execution_result_json = 3;
+  string execution_error = 4;
+}

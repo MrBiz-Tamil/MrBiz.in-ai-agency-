@@ -1,0 +1,25 @@
+# Build artifacts
+*.exe
+*.exe~
+backend-core/server
+dist/
+build/
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+
+# Caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.svelte-kit/
+.vite/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+deploy/.env
+tools/pgtest/.data/

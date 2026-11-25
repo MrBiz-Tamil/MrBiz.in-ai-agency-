@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package venture.connection.v1;
+
+// ConnectionService lets a founder connect a business to third-party providers (Google Calendar and Meet, Zoom,
+// Notion), and disconnect them. Credentials go in on Connect, are verified against the provider, then stored sealed;
+// they are NEVER returned by any call. Founder role required for every method except List (approver or founder).
+service ConnectionService {
+  rpc List(ListRequest) returns (ListResponse);
+  // Connect verifies the credentials with the provider first; if the check fails nothing is stored.
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
+}
+
+message Connection {
+  string provider = 1;      // "google", "zoom" or "notion"
+  string status = 2;        // "ACTIVE"
+  map<string, string> config = 3;  // non-secret settings (calendar id, database id)
+  string connected_by = 4;
+  string updated_at = 5;    // RFC 3339
+}
+
+message ListRequest {
+  string tenant_id = 1;
+}
+
+message ListResponse {
+  repeated Connection connections = 1;
+  // The credential and setting names each provider takes, so a client can build a form.
+  repeated ProviderFields providers = 2;
+}
+
+message ProviderFields {
+  string provider = 1;
+  repeated string credentials = 2;
+  repeated string settings = 3;
+}
+
+message ConnectRequest {
+  string tenant_id = 1;
+  string provider = 2;
+  map<string, string> config = 3;
+  map<string, string> credentials = 4;
+}
+
+message ConnectResponse {
+  Connection connection = 1;
+}
+
+message DisconnectRequest {
+  string tenant_id = 1;
+  string provider = 2;
+}
+
+message DisconnectResponse {}

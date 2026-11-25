@@ -1,0 +1,12 @@
+Name,Email,Financial Status,Created at,Total,Payment Method,Cancelled at,Refunded Amount,Tags,Source,Lineitem name,Lineitem quantity
+#1001,asha@example.com,paid,2026-10-26 10:15:00 +0530,1499.00,UPI,,0.00,,instagram,Linen Co-ord Set,1
+#1002,ravi@example.com,pending,2026-10-27 18:40:00 +0530,899.00,Cash on Delivery (COD),,0.00,RTO,instagram,Cotton Kurta,1
+#1003,meera@example.com,paid,2026-10-28 11:05:00 +0530,2398.00,Cards,,0.00,,facebook-ad,Floral Dress,1
+,,,,,,,,,,Belt,1
+#1004,asha@example.com,paid,2026-11-02 09:30:00 +0530,1299.00,UPI,,0.00,,instagram,Cotton Kurta,1
+#1005,kabir@example.com,pending,2026-11-03 20:10:00 +0530,1799.00,Cash on Delivery (COD),2026-11-04 09:00:00 +0530,0.00,,facebook-ad,Denim Jacket,1
+#1006,meera@example.com,paid,2026-11-04 12:00:00 +0530,999.00,UPI,,999.00,,website,T-shirt,1
+#1007,neha@example.com,paid,2026-11-05 16:45:00 +0530,2199.00,Cards,,0.00,,instagram,Festive Kurta Set,1
+#1008,tara@example.com,pending,2026-11-09 13:20:00 +0530,1499.00,Cash on Delivery (COD),,0.00,RTO,facebook-ad,Linen Co-ord Set,1
+#1009,asha@example.com,paid,2026-11-10 10:00:00 +0530,899.00,UPI,,0.00,,instagram,Cotton Kurta,1
+#1010,zoya@example.com,paid,2026-11-11 19:25:00 +0530,3299.00,Cards,,0.00,,website,Winter Jacket,1

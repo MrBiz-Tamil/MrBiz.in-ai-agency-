@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package venture.portfolio.v1;
+
+// PortfolioService is the data behind the Chairman's portfolio overview: one health row per business.
+service PortfolioService {
+  // GetPortfolio returns health for every business the caller belongs to. Money is never summed across businesses:
+  // each row is in its own base currency.
+  rpc GetPortfolio(GetPortfolioRequest) returns (GetPortfolioResponse);
+}
+
+message GetPortfolioRequest {}
+
+message BusinessHealth {
+  string tenant_id = 1;
+  string slug = 2;
+  string name = 3;
+  // status is DRAFT, PROVISIONING, ACTIVE, SUSPENDED or ARCHIVED.
+  string status = 4;
+  // role is the caller's role: founder, approver or viewer.
+  string role = 5;
+  string base_currency = 6;
+  // forecast_available is false for businesses that are not ACTIVE; the cash fields are then zero.
+  bool forecast_available = 7;
+  // cash_minor is the ledger balance of the business's cash account.
+  int64 cash_minor = 8;
+  // min_cash_minor_90d is the lowest projected closing balance over the next 90 days.
+  int64 min_cash_minor_90d = 9;
+  // cash_negative_within_90d is true when cash is projected to go below zero within 90 days.
+  bool cash_negative_within_90d = 10;
+  // runway_days is the day on which cash first goes negative (1-90); 0 when it does not within the horizon.
+  int32 runway_days = 11;
+  // pending_approvals counts PENDING_APPROVAL items; 0 for roles that cannot see approvals.
+  int32 pending_approvals = 12;
+  int32 high_risk_pending = 13;
+  // last_provision_status is the most recent provisioning run's status, empty if none.
+  string last_provision_status = 14;
+}
+
+message GetPortfolioResponse {
+  repeated BusinessHealth businesses = 1;
+}

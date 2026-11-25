@@ -1,0 +1,634 @@
+# Venture OS — full stack.
+#
+#   scripts/gen-env.ps1   (or scripts/gen-env.sh)      # writes .env with generated secrets
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Always-on: postgres, redis, keycloak, twenty, libredesk, erpnext, hermes, caddy.
+# Profiles (their code lands in later build steps; they will not build before then):
+#   core  -> schema (applies db/schema.sql), controlplane, mcpbus, web (Command Center)
+#   Enable with:  docker compose --profile core up -d --build
+#
+# Network zones: see docs/ARCHITECTURE.md §2. `data` and `erp` are `internal`, so databases have no internet
+# route. hermes is attached to `agents` only: it can never reach a database, only the MCP bus.
+
+name: venture-os
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+x-hardened: &hardened
+  security_opt:
+    - no-new-privileges:true
+
+x-erp-image: &erp-image
+  image: frappe/erpnext:${ERPNEXT_TAG:-v16.60.0}
+
+x-erp-volumes: &erp-volumes
+  volumes:
+    - erp-sites:/home/frappe/frappe-bench/sites
+    - erp-logs:/home/frappe/frappe-bench/logs
+
+x-erp-redis-env: &erp-redis-env
+  FRAPPE_REDIS_CACHE: redis://erp-redis-cache:6379
+  FRAPPE_REDIS_QUEUE: redis://erp-redis-queue:6379
+
+x-twenty-env: &twenty-env
+  PG_DATABASE_URL: postgres://twenty:${TWENTY_DB_PASSWORD:?set TWENTY_DB_PASSWORD}@postgres:5432/twenty
+  SERVER_URL: ${SCHEME:-http}://crm.${BASE_DOMAIN:-localhost}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379/2
+  REDIS_CACHE_PREFIX: twenty
+  STORAGE_TYPE: local
+  APP_SECRET: ${TWENTY_APP_SECRET:?set TWENTY_APP_SECRET}
+  ENCRYPTION_KEY: ${TWENTY_ENCRYPTION_KEY:?set TWENTY_ENCRYPTION_KEY}
+
+services:
+  # ───────────────────────────── data plane ─────────────────────────────
+  postgres:
+    <<: [*restart, *logging, *hardened]
+    image: pgvector/pgvector:${POSTGRES_TAG:-pg17}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: postgres
+      VENTURE_OWNER_PASSWORD: ${VENTURE_OWNER_PASSWORD:?set VENTURE_OWNER_PASSWORD}
+      VENTURE_APP_PASSWORD: ${VENTURE_APP_PASSWORD:?set VENTURE_APP_PASSWORD}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD}
+      TWENTY_DB_PASSWORD: ${TWENTY_DB_PASSWORD:?set TWENTY_DB_PASSWORD}
+      LIBREDESK_DB_PASSWORD: ${LIBREDESK_DB_PASSWORD:?set LIBREDESK_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks: [data]
+
+  redis:
+    <<: [*restart, *logging, *hardened]
+    image: redis:${REDIS_TAG:-7.4-alpine}
+    # noeviction is required by Twenty's job queue (BullMQ); AOF keeps streams durable.
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --maxmemory-policy noeviction
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [data]
+
+  # Applies db/schema.sql as venture_owner. Delivered in build step 3.
+  schema:
+    profiles: [core]
+    image: pgvector/pgvector:${POSTGRES_TAG:-pg17}
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGUSER: venture_owner
+      PGPASSWORD: ${VENTURE_OWNER_PASSWORD:?set VENTURE_OWNER_PASSWORD}
+      PGDATABASE: venture
+    entrypoint: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/schema/apply.sql"]
+    volumes:
+      - ./db:/schema:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data]
+
+  # ───────────────────────────── identity ─────────────────────────────
+  keycloak:
+    <<: [*restart, *logging, *hardened]
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_TAG:-26.8.2}
+    command: ["start", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME: ${SCHEME:-http}://auth.${BASE_DOMAIN:-localhost}
+      KC_HTTP_ENABLED: "true"          # TLS terminates at Caddy
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"        # management interface on :9000
+      KC_METRICS_ENABLED: "false"
+      # Substituted into realm-venture.json at import time.
+      VENTURE_APP_URL: ${SCHEME:-http}://app.${BASE_DOMAIN:-localhost}
+      FOUNDER_EMAIL: ${FOUNDER_EMAIL:?set FOUNDER_EMAIL}
+      FOUNDER_INITIAL_PASSWORD: ${FOUNDER_INITIAL_PASSWORD:?set FOUNDER_INITIAL_PASSWORD}
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${KEYCLOAK_SERVICE_CLIENT_SECRET:?set KEYCLOAK_SERVICE_CLIENT_SECRET}
+    volumes:
+      - ./infra/keycloak/realm-venture.json:/opt/keycloak/data/import/realm-venture.json:ro
+    healthcheck:
+      # The image ships neither curl nor wget; probe the management port with bash's /dev/tcp
+      # and require an HTTP 200 status line from /health/ready.
+      test:
+        - CMD-SHELL
+        - |
+          exec 3<>/dev/tcp/127.0.0.1/9000
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          read -r status_line <&3
+          case "$$status_line" in *" 200 "*) exit 0 ;; esac
+          exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data, edge]
+
+  # ───────────────────────────── CRM (Twenty) ─────────────────────────────
+  twenty-server:
+    <<: [*restart, *logging]
+    image: twentycrm/twenty:${TWENTY_TAG:-v2.62.0}
+    stop_grace_period: 120s
+    environment:
+      <<: *twenty-env
+      NODE_PORT: "3000"
+    volumes:
+      - twenty-storage:/app/packages/twenty-server/.local-storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:3000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [data, edge]
+
+  twenty-worker:
+    <<: [*restart, *logging]
+    image: twentycrm/twenty:${TWENTY_TAG:-v2.62.0}
+    command: ["yarn", "worker:prod"]
+    environment:
+      <<: *twenty-env
+      DISABLE_DB_MIGRATIONS: "true"            # the server already migrates
+      DISABLE_CRON_JOBS_REGISTRATION: "true"   # the server already registers cron jobs
+    volumes:
+      - twenty-storage:/app/packages/twenty-server/.local-storage
+    depends_on:
+      twenty-server:
+        condition: service_healthy
+    networks: [data, egress]
+
+  # ───────────────────────────── Support (LibreDesk) ─────────────────────────────
+  libredesk:
+    <<: [*restart, *logging, *hardened]
+    image: libredesk/libredesk:${LIBREDESK_TAG:-v2.9.2}
+    # Same install → upgrade → run chain as upstream; --idempotent-install makes restarts safe.
+    command:
+      - sh
+      - -c
+      - >-
+        ./libredesk --install --idempotent-install --yes --config /libredesk/config.toml &&
+        ./libredesk --upgrade --yes --config /libredesk/config.toml &&
+        exec ./libredesk --config /libredesk/config.toml
+    environment:
+      # Overrides for keys in config.toml: LIBREDESK_<section>__<key> (see infra/libredesk/config.toml).
+      LIBREDESK_SYSTEM_USER_PASSWORD: ${LIBREDESK_SYSTEM_USER_PASSWORD:?set LIBREDESK_SYSTEM_USER_PASSWORD}
+      LIBREDESK_APP__ENCRYPTION_KEY: ${LIBREDESK_ENCRYPTION_KEY:?set LIBREDESK_ENCRYPTION_KEY (32 chars)}
+      LIBREDESK_DB__PASSWORD: ${LIBREDESK_DB_PASSWORD:?set LIBREDESK_DB_PASSWORD}
+      LIBREDESK_REDIS__PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - ./infra/libredesk/config.toml:/libredesk/config.toml:ro
+      - libredesk-uploads:/libredesk/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 45s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [data, edge]
+
+  # ───────────────────────────── ERP (ERPNext / Frappe) ─────────────────────────────
+  erp-db:
+    <<: [*restart, *logging]
+    image: mariadb:${MARIADB_TAG:-11.8}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --innodb-snapshot-isolation=OFF
+    environment:
+      MARIADB_ROOT_PASSWORD: ${ERP_DB_ROOT_PASSWORD:?set ERP_DB_ROOT_PASSWORD}
+    volumes:
+      - erp-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [erp]
+
+  erp-redis-cache:
+    <<: [*restart, *logging, *hardened]
+    image: redis:${REDIS_TAG:-7.4-alpine}
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [erp]
+
+  erp-redis-queue:
+    <<: [*restart, *logging, *hardened]
+    image: redis:${REDIS_TAG:-7.4-alpine}
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - erp-redis-queue-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [erp]
+
+  erp-configurator:
+    <<: [*erp-image, *erp-volumes, *logging]
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >-
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host $$DB_HOST;
+        bench set-config -gp db_port $$DB_PORT;
+        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
+        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
+        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
+        bench set-config -gp socketio_port $$SOCKETIO_PORT;
+    environment:
+      DB_HOST: erp-db
+      DB_PORT: "3306"
+      REDIS_CACHE: erp-redis-cache:6379
+      REDIS_QUEUE: erp-redis-queue:6379
+      SOCKETIO_PORT: "9000"
+    depends_on:
+      erp-db:
+        condition: service_healthy
+    networks: [erp]
+
+  erp-create-site:
+    <<: [*erp-image, *erp-volumes, *logging]
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        wait-for-it -t 120 erp-db:3306
+        wait-for-it -t 120 erp-redis-cache:6379
+        wait-for-it -t 120 erp-redis-queue:6379
+        start=$$(date +%s)
+        until [[ -n "$$(jq -r '.db_host // empty' sites/common_site_config.json 2>/dev/null)" ]] \
+          && [[ -n "$$(jq -r '.redis_cache // empty' sites/common_site_config.json 2>/dev/null)" ]] \
+          && [[ -n "$$(jq -r '.redis_queue // empty' sites/common_site_config.json 2>/dev/null)" ]]; do
+          echo "Waiting for sites/common_site_config.json to be created"
+          sleep 5
+          if (( $$(date +%s) - start > 120 )); then
+            echo "could not find sites/common_site_config.json with required keys"
+            exit 1
+          fi
+        done
+        if [ -d "sites/$$ERP_SITE_NAME" ]; then
+          echo "Site $$ERP_SITE_NAME already exists, skipping creation"
+        else
+          bench new-site "$$ERP_SITE_NAME" --mariadb-user-host-login-scope='%' --admin-password "$$ERP_ADMIN_PASSWORD" --db-root-username root --db-root-password "$$MARIADB_ROOT_PASSWORD" --install-app erpnext --set-default
+        fi
+    environment:
+      ERP_SITE_NAME: ${ERP_SITE_NAME:-erp.localhost}
+      ERP_ADMIN_PASSWORD: ${ERP_ADMIN_PASSWORD:?set ERP_ADMIN_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${ERP_DB_ROOT_PASSWORD:?set ERP_DB_ROOT_PASSWORD}
+    depends_on:
+      erp-configurator:
+        condition: service_completed_successfully
+    networks: [erp]
+
+  erp-backend:
+    <<: [*erp-image, *erp-volumes, *restart, *logging]
+    environment:
+      DB_HOST: erp-db
+      DB_PORT: "3306"
+      MARIADB_ROOT_PASSWORD: ${ERP_DB_ROOT_PASSWORD:?set ERP_DB_ROOT_PASSWORD}
+    depends_on:
+      erp-configurator:
+        condition: service_completed_successfully
+      erp-create-site:
+        condition: service_completed_successfully
+    networks: [erp, egress]
+
+  erp-websocket:
+    <<: [*erp-image, *erp-volumes, *restart, *logging]
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    environment:
+      <<: *erp-redis-env
+    depends_on:
+      erp-create-site:
+        condition: service_completed_successfully
+    networks: [erp]
+
+  erp-worker-long:
+    <<: [*erp-image, *erp-volumes, *restart, *logging]
+    command: ["bench", "worker", "--queue", "long,default,short"]
+    environment:
+      <<: *erp-redis-env
+    depends_on:
+      erp-create-site:
+        condition: service_completed_successfully
+    networks: [erp, egress]
+
+  erp-worker-short:
+    <<: [*erp-image, *erp-volumes, *restart, *logging]
+    command: ["bench", "worker", "--queue", "short,default"]
+    environment:
+      <<: *erp-redis-env
+    depends_on:
+      erp-create-site:
+        condition: service_completed_successfully
+    networks: [erp, egress]
+
+  erp-scheduler:
+    <<: [*erp-image, *erp-volumes, *restart, *logging]
+    command: ["bench", "schedule"]
+    environment:
+      <<: *erp-redis-env
+    depends_on:
+      erp-create-site:
+        condition: service_completed_successfully
+    networks: [erp, egress]
+
+  # nginx front for Frappe. Routes by Host header, so a site per tenant is just another hostname later.
+  erp-frontend:
+    <<: [*erp-image, *erp-volumes, *restart, *logging]
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: erp-backend:8000
+      SOCKETIO: erp-websocket:9000
+      UPSTREAM_REAL_IP_ADDRESS: 172.16.0.0/12   # docker bridge ranges; Caddy sets X-Forwarded-For
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: "120"
+      CLIENT_MAX_BODY_SIZE: 50m
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    depends_on:
+      - erp-backend
+      - erp-websocket
+    networks: [erp, edge]
+
+  # ───────────────────────────── Agent plane ─────────────────────────────
+  # Built from source: no versioned upstream image was verifiable. Pin HERMES_REF.
+  # Hermes worker. One process serving the OpenAI-compatible API on :8642 inside `agents`.
+  # Tenant profiles and SKILL.md files are written into the hermes-data volume by the control plane.
+  hermes:
+    <<: [*restart, *logging]
+    build:
+      context: https://github.com/NousResearch/hermes-agent.git#${HERMES_REF:-v0.23.3}
+      dockerfile: Dockerfile
+    image: venture-os/hermes-agent:${HERMES_REF:-v0.23.3}
+    command: ["gateway", "run"]
+    environment:
+      HERMES_UID: ${HERMES_UID:-10001}
+      HERMES_GID: ${HERMES_GID:-10001}
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_KEY: ${HERMES_API_SERVER_KEY:?set HERMES_API_SERVER_KEY}
+      VENTURE_MCP_TOKEN: ${HERMES_MCP_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - hermes-data:/opt/data
+      - ./infra/hermes/config.yaml:/opt/data/config.yaml
+    healthcheck:
+      test:
+        - CMD
+        - /opt/hermes/.venv/bin/python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8642), 3).close()"
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    networks: [agents]
+
+  # ───────────────────────────── Venture OS services (profile: core / web) ─────────────────────────────
+  controlplane:
+    <<: [*restart, *logging, *hardened]
+    profiles: [core]
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args:
+        SERVICE: controlplane
+    image: venture-os/controlplane:${VENTURE_VERSION:-dev}
+    environment:
+      VENTURE_ENV: ${VENTURE_ENV:-production}
+      VENTURE_HTTP_ADDR: ":8080"
+      # Per-system real/fake selection; see internal/connectors. Real adapters exist for IDENTITY (Keycloak), ERP
+      # (ERPNext) and RUNTIME (Hermes). SUPPORT must stay "fake" (it is simulated).
+      VENTURE_CONNECTORS: ${VENTURE_CONNECTORS:-fake}
+      VENTURE_CONNECTOR_IDENTITY: ${VENTURE_CONNECTOR_IDENTITY:-}
+      VENTURE_CONNECTOR_ERP: ${VENTURE_CONNECTOR_ERP:-}
+      VENTURE_CONNECTOR_CRM: ${VENTURE_CONNECTOR_CRM:-}
+      # Master key(s) that seal third-party credentials (Google, Zoom, Notion). Generate one with: openssl rand -base64 32
+      # Format: "1:<base64>"; to rotate, add "2:<base64>" and set VENTURE_SECRETS_CURRENT=2. Empty disables integrations.
+      VENTURE_SECRETS_KEYS: ${VENTURE_SECRETS_KEYS:-}
+      VENTURE_SECRETS_CURRENT: ${VENTURE_SECRETS_CURRENT:-}
+      VENTURE_CONNECTOR_SUPPORT: ${VENTURE_CONNECTOR_SUPPORT:-}
+      VENTURE_CONNECTOR_RUNTIME: ${VENTURE_CONNECTOR_RUNTIME:-}
+      VENTURE_ALLOW_FAKE_CONNECTORS: ${VENTURE_ALLOW_FAKE_CONNECTORS:-true}
+      KEYCLOAK_REALM: venture
+      DATABASE_URL: postgres://venture_app:${VENTURE_APP_PASSWORD}@postgres:5432/venture?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      OIDC_ISSUER_URL: ${SCHEME:-http}://auth.${BASE_DOMAIN:-localhost}/realms/venture
+      OIDC_AUDIENCE: venture-api
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080
+      KEYCLOAK_SERVICE_CLIENT_ID: venture-service
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${KEYCLOAK_SERVICE_CLIENT_SECRET}
+      TWENTY_URL: http://twenty-server:3000
+      TWENTY_API_KEY: ${TWENTY_API_KEY:-}
+      LIBREDESK_URL: http://libredesk:9000
+      LIBREDESK_API_KEY: ${LIBREDESK_API_KEY:-}
+      LIBREDESK_API_SECRET: ${LIBREDESK_API_SECRET:-}
+      ERP_URL: http://erp-frontend:8080
+      ERP_SITE_NAME: ${ERP_SITE_NAME:-erp.localhost}
+      ERP_API_KEY: ${ERP_API_KEY:-}
+      ERP_API_SECRET: ${ERP_API_SECRET:-}
+      HERMES_URL: http://hermes:8642
+      HERMES_API_SERVER_KEY: ${HERMES_API_SERVER_KEY}
+      HERMES_DATA_DIR: /hermes-data
+      MCPBUS_PUBLIC_URL: http://mcpbus:8090/mcp
+      MCP_TOKEN_SIGNING_KEY: ${MCP_TOKEN_SIGNING_KEY:?set MCP_TOKEN_SIGNING_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # required by the controlplane at startup (Genesis interview)
+      GENESIS_MODEL: ${GENESIS_MODEL:-claude-sonnet-5-5}
+    volumes:
+      - hermes-data:/hermes-data
+    healthcheck:
+      test: ["CMD", "/app/controlplane", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks: [data, erp, agents, edge]
+
+  mcpbus:
+    <<: [*restart, *logging, *hardened]
+    profiles: [core]
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args:
+        SERVICE: mcpbus
+    image: venture-os/mcpbus:${VENTURE_VERSION:-dev}
+    # Deliberately no DATABASE_URL: the bus can only call the control plane, never a database.
+    environment:
+      VENTURE_ENV: ${VENTURE_ENV:-production}
+      MCPBUS_HTTP_ADDR: ":8090"
+      CONTROLPLANE_URL: http://controlplane:8080
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      MCP_TOKEN_SIGNING_KEY: ${MCP_TOKEN_SIGNING_KEY:?set MCP_TOKEN_SIGNING_KEY}
+      MCPBUS_RATE_LIMIT_PER_MIN: ${MCPBUS_RATE_LIMIT_PER_MIN:-120}
+      # Same selection as the control plane: the crm_ops tools are offered only when the CRM is real.
+      VENTURE_CONNECTORS: ${VENTURE_CONNECTORS:-fake}
+      VENTURE_CONNECTOR_CRM: ${VENTURE_CONNECTOR_CRM:-}
+      # Offer the calendar/meetings/notes tools. Needs VENTURE_SECRETS_KEYS on the control plane (the bus never gets it).
+      VENTURE_COLLAB_TOOLS: ${VENTURE_COLLAB_TOOLS:-false}
+    healthcheck:
+      test: ["CMD", "/app/mcpbus", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      controlplane:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [data, agents]
+
+  web:
+    <<: [*restart, *logging, *hardened]
+    profiles: [core]
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+    image: venture-os/web:${VENTURE_VERSION:-dev}
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      ORIGIN: ${SCHEME:-http}://app.${BASE_DOMAIN:-localhost}
+      # The browser never talks to the control plane: this server does, holding the user's token in an encrypted
+      # httpOnly cookie. That is why no api.* host is routed in the Caddyfile.
+      CONTROLPLANE_URL: http://controlplane:8080
+      AUTH_MODE: oidc
+      OIDC_ISSUER_URL: ${SCHEME:-http}://auth.${BASE_DOMAIN:-localhost}/realms/venture
+      OIDC_CLIENT_ID: venture-web
+      SESSION_SECRET: ${WEB_SESSION_SECRET:?set WEB_SESSION_SECRET}
+      VENTURE_CONNECTORS: ${VENTURE_CONNECTORS:-fake}
+      VENTURE_CONNECTOR_IDENTITY: ${VENTURE_CONNECTOR_IDENTITY:-}
+      VENTURE_CONNECTOR_ERP: ${VENTURE_CONNECTOR_ERP:-}
+      VENTURE_CONNECTOR_CRM: ${VENTURE_CONNECTOR_CRM:-}
+      VENTURE_CONNECTOR_SUPPORT: ${VENTURE_CONNECTOR_SUPPORT:-}
+      VENTURE_CONNECTOR_RUNTIME: ${VENTURE_CONNECTOR_RUNTIME:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      controlplane:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks: [edge]
+
+  # ───────────────────────────── edge ─────────────────────────────
+  caddy:
+    <<: [*restart, *logging, *hardened]
+    image: caddy:${CADDY_TAG:-2.10-alpine}
+    environment:
+      SCHEME: ${SCHEME:-http}
+      BASE_DOMAIN: ${BASE_DOMAIN:-localhost}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge:
+        # Containers resolve the public hostnames to Caddy, so OIDC issuer URLs match inside and outside.
+        aliases:
+          - app.${BASE_DOMAIN:-localhost}
+          - auth.${BASE_DOMAIN:-localhost}
+          - crm.${BASE_DOMAIN:-localhost}
+          - support.${BASE_DOMAIN:-localhost}
+          - erp.${BASE_DOMAIN:-localhost}
+          - agents.${BASE_DOMAIN:-localhost}
+
+networks:
+  edge:
+    driver: bridge
+  # Outbound-only (email, webhooks, FX rates). Nothing listens here: it exists so `internal` networks stay sealed.
+  egress:
+    driver: bridge
+  agents:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true
+  erp:
+    driver: bridge
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+  twenty-storage:
+  libredesk-uploads:
+  erp-db-data:
+  erp-redis-queue-data:
+  erp-sites:
+  erp-logs:
+  hermes-data:
+  caddy-data:
+  caddy-config:

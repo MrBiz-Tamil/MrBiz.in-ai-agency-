@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package venture.controls.v1;
+
+// ControlsService exposes the safety controls of a business: spend caps and audit-log verification.
+//
+// Spend caps are hard ceilings on money leaving the business (payments and purchase orders), checked when a request is
+// approved: an approval that would break a cap is refused, even from a founder, until the cap is raised. Amounts are
+// minor units. Reading needs approver or founder; changing a cap needs founder.
+service ControlsService {
+  rpc GetSpendCaps(GetSpendCapsRequest) returns (GetSpendCapsResponse);
+  // SetSpendCap replaces the cap for one currency. Leaving every ceiling unset removes the cap.
+  rpc SetSpendCap(SetSpendCapRequest) returns (SetSpendCapResponse);
+  // VerifyAudit walks the business's tamper-evident audit chain.
+  rpc VerifyAudit(VerifyAuditRequest) returns (VerifyAuditResponse);
+}
+
+// A ceiling field that is absent (has_x false) means "no ceiling on this dimension"; 0 is a real ceiling (nothing).
+message SpendCap {
+  string currency = 1;
+  optional int64 per_transaction_minor = 2;
+  optional int64 per_hour_minor = 3;
+  optional int64 per_day_minor = 4;
+  string updated_by = 5;
+  string updated_at = 6;
+}
+
+message GetSpendCapsRequest {
+  string tenant_id = 1;
+}
+
+message GetSpendCapsResponse {
+  repeated SpendCap caps = 1;
+}
+
+message SetSpendCapRequest {
+  string tenant_id = 1;
+  SpendCap cap = 2;
+}
+
+message SetSpendCapResponse {
+  repeated SpendCap caps = 1;
+}
+
+message VerifyAuditRequest {
+  string tenant_id = 1;
+}
+
+message VerifyAuditResponse {
+  bool intact = 1;
+  // The id of the first audit row whose hash or link to the previous row does not match. Set when not intact.
+  int64 first_bad_id = 2;
+  int64 rows_checked = 3;
+  // The newest hash, hex encoded. Record it somewhere the database owner cannot write: a later shorter chain with a
+  // different head reveals that recent rows were removed.
+  string head_hex = 4;
+}

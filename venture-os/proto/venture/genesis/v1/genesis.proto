@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package venture.genesis.v1;
+
+// GenesisService is the conversational company-creation flow: interview -> blueprint -> founder approval.
+service GenesisService {
+  // StartSession opens the interview for a business. Idempotent per idempotency_key.
+  rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
+  // Converse sends one founder message and returns the Venture Architect's reply plus the latest validated
+  // blueprint draft. Idempotent per turn_key: a retried turn returns the stored reply without calling the model.
+  rpc Converse(ConverseRequest) returns (ConverseResponse);
+  // GetSession returns the transcript and the latest draft.
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+  // SubmitBlueprint freezes the session's current draft as a new blueprint version awaiting approval.
+  rpc SubmitBlueprint(SubmitBlueprintRequest) returns (SubmitBlueprintResponse);
+  // GetBlueprint returns one blueprint version.
+  rpc GetBlueprint(GetBlueprintRequest) returns (GetBlueprintResponse);
+  // ApproveBlueprint is the founder's sign-off. Only an approved blueprint can be provisioned.
+  rpc ApproveBlueprint(ApproveBlueprintRequest) returns (ApproveBlueprintResponse);
+}
+
+message StartSessionRequest {
+  string tenant_id = 1;
+  string idempotency_key = 2;
+}
+
+message StartSessionResponse {
+  string session_id = 1;
+}
+
+message ConverseRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string message = 3;
+  // turn_key must be unique per founder message and reused when retrying it.
+  string turn_key = 4;
+}
+
+message ConverseResponse {
+  string assistant_message = 1;
+  // draft_blueprint_json is the latest blueprint that passed validation (JSON), empty until one exists.
+  bytes draft_blueprint_json = 2;
+  bool draft_changed = 3;
+  // ready means the draft is complete and valid, and can be submitted for approval.
+  bool ready = 4;
+  // problems are validation problems the model could not resolve this turn.
+  repeated string problems = 5;
+  bool replayed = 6;
+}
+
+message GetSessionRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+}
+
+message Turn {
+  // role is "founder" or "assistant".
+  string role = 1;
+  string content = 2;
+}
+
+message GetSessionResponse {
+  string status = 1;
+  repeated Turn turns = 2;
+  bytes draft_blueprint_json = 3;
+}
+
+message SubmitBlueprintRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string idempotency_key = 3;
+}
+
+message SubmitBlueprintResponse {
+  string blueprint_id = 1;
+  int32 version = 2;
+  // content_hash is the hex sha256 of the canonical blueprint: what the founder approves.
+  string content_hash = 3;
+  string status = 4;
+}
+
+message GetBlueprintRequest {
+  string tenant_id = 1;
+  string blueprint_id = 2;
+}
+
+message GetBlueprintResponse {
+  string blueprint_id = 1;
+  int32 version = 2;
+  string status = 3;
+  bytes blueprint_json = 4;
+  string content_hash = 5;
+  string approved_by = 6;
+}
+
+message ApproveBlueprintRequest {
+  string tenant_id = 1;
+  string blueprint_id = 2;
+  // content_hash must equal the hash of the blueprint the founder was shown; a mismatch rejects the approval.
+  string content_hash = 3;
+}
+
+message ApproveBlueprintResponse {
+  string blueprint_id = 1;
+  string status = 2;
+}

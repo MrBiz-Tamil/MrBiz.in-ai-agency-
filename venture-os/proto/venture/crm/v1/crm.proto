@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package venture.crm.v1;
+
+// CrmService is the Command Center's door to a business's CRM. Unlike AgentService it is called by signed-in people
+// (OIDC bearer token) and names the business explicitly; the caller must be a member of it.
+//
+// Operations are the ones defined in internal/crmops (the same ones agents use, with the same validation), run as
+// the signed-in user. Reading needs at least the viewer role; any write needs approver or founder. Arguments and
+// results are JSON documents, whose shapes are the operations' schemas.
+service CrmService {
+  // Execute runs one operation (crm_pipelines, crm_find_deals, crm_move_deal, ...) on the business's CRM.
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+}
+
+message ExecuteRequest {
+  string tenant_id = 1;
+  // One of the names in internal/crmops.
+  string operation = 2;
+  // The operation's arguments as a JSON object.
+  bytes args_json = 3;
+}
+
+message ExecuteResponse {
+  bytes result_json = 1;
+}

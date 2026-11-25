@@ -1,0 +1,295 @@
+"""
+Scalar Types
+"""
+scalar DateTime
+scalar JSON
+scalar Decimal
+
+"""
+Execution ticket status lifecycle
+"""
+enum TicketStatus {
+  QUEUED
+  RUNNING
+  PENDING_APPROVAL
+  CONFLICT_HOLD
+  COMPLETED
+  FAILED
+}
+
+"""
+Specialist Agent Model Tiers
+"""
+enum ModelTier {
+  FLASH
+  FRONTIER
+}
+
+"""
+Entity types managed across connected ERPs
+"""
+enum EntityType {
+  SKU
+  ORDER
+  CUSTOMER
+  INVOICE
+  VENDOR
+}
+
+"""
+System health status indicators
+"""
+enum HealthStatus {
+  HEALTHY
+  DEGRADED
+  CRITICAL
+}
+
+# ==============================================================================
+# Queries
+# ==============================================================================
+type Query {
+  # Workspace & Settings
+  workspace(id: ID!): Workspace!
+
+  # Live Operations Board
+  executionBoard(workspaceId: ID!): ExecutionBoardState!
+
+  # Tickets & Approvals
+  tickets(workspaceId: ID!, status: TicketStatus, limit: Int = 50, offset: Int = 0): [ExecutionTicket!]!
+  ticket(id: ID!): ExecutionTicket!
+  pendingApprovals(workspaceId: ID!): [ExecutionTicket!]!
+
+  # Agent Workforce
+  agentRoster(workspaceId: ID!): [AgentDefinition!]!
+  agent(id: ID!): AgentDefinition!
+
+  # Business Planner & Goals
+  activeGoals(workspaceId: ID!): [BusinessGoal!]!
+  goal(id: ID!): BusinessGoal!
+
+  # Decision X-Ray Audit Trail
+  decisionXRay(ticketId: ID!): [AuditXRayLog!]!
+
+  # Enterprise Connections
+  mcpConnections(workspaceId: ID!): [MCPConnection!]!
+}
+
+# ==============================================================================
+# Mutations
+# ==============================================================================
+type Mutation {
+  # Human Approval Actions
+  approveTicket(input: ApproveTicketInput!): ExecutionTicket!
+  rejectTicket(input: RejectTicketInput!): ExecutionTicket!
+  modifyAndExecuteTicket(input: ModifyTicketInput!): ExecutionTicket!
+
+  # Business Planner
+  createGoal(input: CreateGoalInput!): BusinessGoal!
+  triggerPlanExecution(goalId: ID!): BusinessGoal!
+
+  # Natural-Language Policy Compiler
+  compileAndSavePolicy(input: CompilePolicyInput!): PolicyRule!
+
+  # Agent Governance
+  updateAgentBudget(agentId: ID!, dailyBudgetUsd: Decimal!): AgentDefinition!
+  pauseAgent(agentId: ID!): AgentDefinition!
+  resumeAgent(agentId: ID!): AgentDefinition!
+  triggerManualHeartbeat(agentId: ID!): Boolean!
+
+  # Feedback Loop ("Correct Agent")
+  submitAgentCorrection(input: AgentCorrectionInput!): Boolean!
+
+  # MCP Connectors
+  registerMCPConnection(input: RegisterMCPInput!): MCPConnection!
+  testMCPHealth(connectionId: ID!): HealthStatus!
+}
+
+# ==============================================================================
+# Real-Time Subscriptions (graphql-ws)
+# ==============================================================================
+type Subscription {
+  # Live updates when cards transition lanes on the Execution Board
+  ticketUpdated(workspaceId: ID!): ExecutionTicket!
+
+  # High-priority alert when a ticket is held for human approval
+  approvalRequested(workspaceId: ID!): ExecutionTicket!
+
+  # Triggered when an agent reaches 80% or 100% (circuit breaker tripped)
+  budgetAlertTriggered(workspaceId: ID!): BudgetAlert!
+
+  # Live stream of active telephony / WebRTC customer calls
+  liveVoiceCallActive(workspaceId: ID!): LiveVoiceCall!
+
+  # Real-time stream of audit logs for the Decision X-Ray viewer
+  auditLogAppended(ticketId: ID!): AuditXRayLog!
+}
+
+# ==============================================================================
+# Types & Inputs
+# ==============================================================================
+type Workspace {
+  id: ID!
+  name: String!
+  defaultCurrency: String!
+  taxJurisdiction: String!
+  dailySpendLimitUsd: Decimal!
+  createdAt: DateTime!
+}
+
+type ExecutionBoardState {
+  systemHealth: HealthStatus!
+  incomingCount: Int!
+  syncingCount: Int!
+  reconcilingCount: Int!
+  pendingApprovalsCount: Int!
+  recentTickets: [ExecutionTicket!]!
+}
+
+type ExecutionTicket {
+  id: ID!
+  workspaceId: ID!
+  goalId: ID
+  assignedAgent: AgentDefinition
+  status: TicketStatus!
+  idempotencyKey: String!
+  priority: Int!
+  actionType: String!
+  payload: JSON!
+  result: JSON
+  conflictDiff: ConflictDiff
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type ConflictDiff {
+  entityType: EntityType!
+  field: String!
+  systemA: String!
+  valueA: String!
+  systemB: String!
+  valueB: String!
+}
+
+type AgentDefinition {
+  id: ID!
+  roleName: String!
+  modelTier: ModelTier!
+  heartbeatCron: String
+  dailyBudgetUsd: Decimal!
+  spentTodayUsd: Decimal!
+  status: String!
+  playbookRef: String
+}
+
+type BusinessGoal {
+  id: ID!
+  title: String!
+  targetMetric: String!
+  targetValue: Decimal!
+  currentValue: Decimal!
+  projectedMarginPct: Decimal!
+  deadline: DateTime!
+  status: String!
+  milestones: [Milestone!]!
+}
+
+type Milestone {
+  id: ID!
+  stepOrder: Int!
+  action: String!
+  assignedAgentRole: String!
+  isCompleted: Boolean!
+}
+
+type AuditXRayLog {
+  id: ID!
+  stepNumber: Int!
+  toolName: String
+  inputSanitized: JSON
+  outputSanitized: JSON
+  policyDecision: String!
+  tokenCost: Decimal!
+  latencyMs: Int!
+  createdAt: DateTime!
+}
+
+type MCPConnection {
+  id: ID!
+  serverName: String!
+  transportType: String!
+  serverUri: String!
+  healthStatus: HealthStatus!
+  allowedScopes: [String!]!
+}
+
+type BudgetAlert {
+  agentId: ID!
+  agentRole: String!
+  spentTodayUsd: Decimal!
+  dailyBudgetUsd: Decimal!
+  percentageUsed: Float!
+  isHardCutoff: Boolean!
+}
+
+type LiveVoiceCall {
+  callId: ID!
+  callerNumber: String!
+  agentRole: String!
+  channel: String!
+  durationSeconds: Int!
+  sentiment: String!
+  liveTranscriptSnippet: String!
+}
+
+type PolicyRule {
+  id: ID!
+  triggerEvent: String!
+  compiledAstJson: JSON!
+  assignedApprovalRole: String!
+}
+
+# --- Mutation Inputs ---
+input ApproveTicketInput {
+  ticketId: ID!
+  overrideReason: String
+}
+
+input RejectTicketInput {
+  ticketId: ID!
+  rejectionReason: String!
+}
+
+input ModifyTicketInput {
+  ticketId: ID!
+  modifiedPayload: JSON!
+}
+
+input CreateGoalInput {
+  workspaceId: ID!
+  title: String!
+  description: String!
+  targetDeadline: DateTime!
+  constraints: JSON!
+}
+
+input CompilePolicyInput {
+  workspaceId: ID!
+  rawPolicyText: String!
+}
+
+input AgentCorrectionInput {
+  ticketId: ID!
+  agentId: ID!
+  correctionNote: String!
+  updatePlaybookInNotion: Boolean!
+}
+
+input RegisterMCPInput {
+  workspaceId: ID!
+  serverName: String!
+  transportType: String!
+  serverUri: String!
+  rawCredentialsJson: String!
+  allowedScopes: [String!]!
+}
