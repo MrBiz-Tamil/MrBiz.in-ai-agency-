@@ -24,7 +24,7 @@ clean, counts := shield.Redact(text) // redaction only, no quarantine: for logs
 
    | Type | What |
    | --- | --- |
-   | `CREDIT_CARD` | 13-19 digits that pass the Luhn checksum, in any spacing (`4111 1111...`, `4111-1111-...`, glued) |
+   | `CREDIT_CARD` | 13-19 digits that pass the Luhn checksum, in any spacing: groups joined by up to three of space, tab, line break, `- . , / | _` or a Unicode dash (`4111 1111...`, `4111 - 1111...`, `4111.1111...`, one per line, glued) |
    | `AADHAAR` | 12 digits starting 2-9, whole or as 4-4-4 |
    | `PAN_IN` | five capitals, four digits, one capital |
    | `EMAIL` | the usual address shape |
@@ -45,6 +45,8 @@ Input over 100,000 characters is refused (`ErrTooLarge`), not truncated: a parti
 | Change | Why |
 | --- | --- |
 | **Detection runs after Unicode normalisation.** Full-width characters, zero-width and other invisible characters are handled, and digits of any script (Devanagari, Arabic-Indic, full-width) count as digits. | The original redacted the raw text, so `९८७६५४३२१०` or `9876<zero-width>543210` passed straight through. |
+| **Injection screening reads invisible characters two ways.** Once deleted (`ig<ZWSP>nore`) and once as a space (`ignore<ZWSP>previous`); a match under either reading withholds the text. Hangul fillers, the braille blank and combining marks count as gaps too. | Deleting alone turned `ignore<ZWSP>previous instructions` into `ignoreprevious instructions`, which matched nothing. |
+| **Number groups may be separated by up to three separator characters**, not only a lone space or hyphen, and a phone prefix may be glued to the first half (`098765 43210`). | Cards written with a double space, `" - "`, dots, commas or one group per line, and the glued-prefix phone form, were not redacted. |
 | **Phone numbers in the formats people really type**: `98765 43210`, `91 9876543210`, `919876543210`, `+91-98765-43210`. | The original needed ten unbroken digits, and `91 ...` without a plus slipped by. |
 | **A card is found even with other digits before or after it** (`order 99 4532 0151 1283 0366`). Every group is tried as a start, longest number wins. | The original took the whole chain, failed the checksum on it, and left the real card in the text. |
 | **Look-alike letters** (Cyrillic and Greek) are folded to Latin and accents dropped before injection matching. | `ignоre` with a Cyrillic `о` evaded every phrase. |

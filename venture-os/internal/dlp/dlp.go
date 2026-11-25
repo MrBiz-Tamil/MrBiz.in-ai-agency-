@@ -131,8 +131,26 @@ func compileAny(flags string, patterns []string) *regexp.Regexp {
 // clean returns the text in a form where detection cannot be dodged by encoding tricks, while keeping case and spacing so
 // the result is still readable: NFKC (full-width and compatibility characters become ordinary ones), invisible formatting
 // characters removed (zero-width spaces and joiners, soft hyphens, bidi controls), and decimal digits of every script
-// turned into ASCII digits.
-func clean(s string) string {
+// turned into ASCII digits, and every Unicode dash or minus into "-" so a separator written as an en dash is still one.
+func clean(s string) string { return normalise(s, false) }
+
+// cleanSpaced is clean with one difference: an invisible character becomes a SPACE instead of vanishing. Deleting is right
+// for data ("4111<ZWSP>1111" is one number) and wrong for words ("ignore<ZWSP>previous" would become the single word
+// "ignoreprevious" and match no phrase), while a model reads the zero-width character as a word break. Injection screening
+// therefore tries both readings.
+func cleanSpaced(s string) string { return normalise(s, true) }
+
+// invisibleFiller reports characters that render as nothing (or as blank space) but are not format characters, so Unicode
+// category Cf does not cover them: Hangul fillers and the braille blank.
+func invisibleFiller(r rune) bool {
+	switch r {
+	case 0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800:
+		return true
+	}
+	return false
+}
+
+func normalise(s string, invisibleAsSpace bool) string {
 	s = strings.ToValidUTF8(s, "�")
 	var b strings.Builder
 	b.Grow(len(s))
@@ -141,7 +159,13 @@ func clean(s string) string {
 		case r < utf8.RuneSelf:
 			b.WriteRune(r)
 		case unicode.Is(unicode.Cf, r):
-			// invisible: drop
+			if invisibleAsSpace {
+				b.WriteByte(' ')
+			} // otherwise invisible: drop
+		case invisibleAsSpace && invisibleFiller(r):
+			b.WriteByte(' ')
+		case unicode.Is(unicode.Pd, r) || r == 0x2212: // en and em dashes, non-breaking hyphen, minus sign, ...
+			b.WriteByte('-')
 		case unicode.IsDigit(r): // category Nd, so it has a decimal value
 			if d, ok := digitValue(r); ok {
 				b.WriteByte(byte('0' + d))
@@ -185,14 +209,18 @@ var confusables = map[rune]rune{
 }
 
 // skeleton is the form injection patterns are also tried against: no accents or combining marks, lower case, look-alike
-// letters folded to Latin, every run of whitespace (newlines too) one space.
-func skeleton(cleaned string) string {
+// letters folded to Latin, every run of whitespace (newlines too) one space. With marksAsSpace a combining mark counts as
+// whitespace instead of being skipped, for the same reason invisible characters do (see cleanSpaced).
+func skeleton(cleaned string, marksAsSpace bool) string {
 	d := norm.NFKD.String(cleaned)
 	var b strings.Builder
 	b.Grow(len(d))
 	space := false
 	for _, r := range d {
 		if unicode.Is(unicode.Mn, r) {
+			if marksAsSpace {
+				space = true
+			}
 			continue
 		}
 		if unicode.IsSpace(r) {
@@ -235,8 +263,8 @@ type group struct{ s, e int } // a run of ASCII digits, as byte offsets
 
 func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
-// redactNumbers finds cards, Aadhaar numbers and Indian mobile numbers. They are digit groups joined by single spaces or
-// hyphens, which a regular expression without lookaround cannot delimit properly, so this scans by hand. From every group
+// redactNumbers finds cards, Aadhaar numbers and Indian mobile numbers. They are digit groups joined by a short run of
+// separators (see isSep), which a regular expression without lookaround cannot delimit properly, so this scans by hand. From every group
 // that starts a number it takes the LONGEST run of following groups that forms a recognised number, then carries on after
 // it. Trying every group as a start means "order 99 4532 0151 1283 0366" still finds the card.
 func redactNumbers(text string, counts map[string]int) string {
@@ -271,7 +299,23 @@ func redactNumbers(text string, counts map[string]int) string {
 	return out.String()
 }
 
-// chainGroups returns the digit groups starting at i that are joined by a single space or hyphen.
+// maxSepRun is how many separator characters may sit between two digit groups of one number: enough for ", ", " - ",
+// "\r\n" or a double space, not so many that unrelated figures join up.
+const maxSepRun = 3
+
+// isSep reports characters people put between the groups of a number: space, tab, line breaks, hyphen, dot, comma, slash,
+// pipe and underscore (Unicode dashes were already turned into "-" by normalise). Joining more than a lone space or hyphen
+// can only make the filter redact more, which is the safe error; a card still has to pass the Luhn check and a phone or
+// Aadhaar number has to have a recognised shape.
+func isSep(b byte) bool {
+	switch b {
+	case ' ', '\t', '\r', '\n', '-', '.', ',', '/', '|', '_':
+		return true
+	}
+	return false
+}
+
+// chainGroups returns the digit groups starting at i that are joined by a short run of separators.
 func chainGroups(text string, i int) []group {
 	var gs []group
 	n := len(text)
@@ -281,8 +325,12 @@ func chainGroups(text string, i int) []group {
 			j++
 		}
 		gs = append(gs, group{i, j})
-		if j+1 < n && (text[j] == ' ' || text[j] == '-') && isDigit(text[j+1]) {
-			i = j + 1
+		k := j
+		for k < n && k-j < maxSepRun && isSep(text[k]) {
+			k++
+		}
+		if k > j && k < n && isDigit(text[k]) {
+			i = k
 			continue
 		}
 		return gs
@@ -360,6 +408,13 @@ func isPhone(lens []int, d []byte) bool {
 		return d[0] == '0' && mobileStart(d[1])
 	case shape(lens, 4, 10), shape(lens, 4, 5, 5):
 		return str[:4] == "0091" && mobileStart(d[4])
+	// A prefix written glued to the first half of a 5+5 number: "098765 43210", "9198765 43210", "009198765 43210".
+	case shape(lens, 6, 5):
+		return d[0] == '0' && mobileStart(d[1])
+	case shape(lens, 7, 5):
+		return str[:2] == "91" && mobileStart(d[2])
+	case shape(lens, 9, 5):
+		return str[:4] == "0091" && mobileStart(d[4])
 	}
 	return false
 }
@@ -383,15 +438,22 @@ func luhn(d []byte) bool {
 
 // ───────────────────────────── inspection ─────────────────────────────
 
-func detectInjection(cleaned string) bool {
-	flat := skeleton(cleaned)
+// detectInjection screens the ORIGINAL content under both readings of invisible characters: deleted (they sit inside a
+// word: "ig<ZWSP>nore") and as a space (they replace the gap between words: "ignore<ZWSP>previous"). Either reading
+// matching is enough.
+func detectInjection(content string) bool {
+	return injectionIn(clean(content), false) || injectionIn(cleanSpaced(content), true)
+}
+
+func injectionIn(cleaned string, marksAsSpace bool) bool {
+	flat := skeleton(cleaned, marksAsSpace)
 	// One scan, of the skeleton: it matches everything the text as given or as normalised would (the patterns are
 	// case-insensitive and the skeleton only removes marks and extra spaces and folds look-alikes), and more.
 	if injectionRE.MatchString(flat) {
 		return true
 	}
 	for _, line := range strings.FieldsFunc(cleaned, func(r rune) bool { return r == '\n' || r == '\r' }) {
-		if roleLineRE.MatchString(skeleton(line)) || roleLineRE.MatchString(line) {
+		if roleLineRE.MatchString(skeleton(line, marksAsSpace)) || roleLineRE.MatchString(line) {
 			return true
 		}
 	}
@@ -423,9 +485,8 @@ func (s *Shield) Inspect(content, origin string) (Result, error) {
 		origin = string(r[:64])
 	}
 
-	cleaned := clean(content)
-	redacted, counts := s.Redact(cleaned)
-	injection := detectInjection(cleaned)
+	redacted, counts := s.Redact(content)
+	injection := detectInjection(content)
 
 	body := Withheld
 	if !injection {
