@@ -145,16 +145,12 @@ func (s *approvalSvc) DecideApproval(ctx context.Context, req *connect.Request[a
 	case errors.Is(err, store.ErrSpendCap):
 		var sc *store.SpendCapError
 		errors.As(err, &sc)
-		_ = s.Repo.AuditUser(ctx, tenant, p.Sub, "spend_cap.blocked", "approval", id.String(), map[string]any{"dimension": sc.Dimension, "currency": sc.Currency})
+		s.auditUser(ctx, tenant, p.Sub, "spend_cap.blocked", "approval", id.String(), map[string]any{"dimension": sc.Dimension, "currency": sc.Currency})
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New(spendCapMessage(sc)))
 	case err != nil:
 		return nil, s.internal("approvals: decide", err)
 	}
-	action := "approval.reject"
-	if req.Msg.Approve {
-		action = "approval.approve"
-	}
-	_ = s.Repo.AuditUser(ctx, tenant, p.Sub, action, "approval", id.String(), map[string]any{"kind": a.Kind, "note": req.Msg.Note})
+	// The decision's audit row was written in the same transaction as the decision itself (store.DecideApproval).
 
 	resp := &approvalv1.DecideApprovalResponse{Status: a.Status}
 	if !req.Msg.Approve {
@@ -195,7 +191,7 @@ func (s *Server) retryExecution(ctx context.Context, by string, a store.Approval
 	if out.status == "EXECUTING" && !out.executed && out.errMsg == "" {
 		return nil, false // someone else holds a live claim: this repeat is a plain duplicate, not a retry
 	}
-	_ = s.Repo.AuditUser(ctx, a.TenantID, by, "approval.execute_retry", "approval", a.ID.String(), map[string]any{"kind": a.Kind, "from": a.Status, "to": out.status})
+	s.auditUser(ctx, a.TenantID, by, "approval.execute_retry", "approval", a.ID.String(), map[string]any{"kind": a.Kind, "from": a.Status, "to": out.status})
 	return &approvalv1.DecideApprovalResponse{Status: out.status, Executed: out.executed, ExecutionResultJson: out.result, ExecutionError: out.errMsg}, true
 }
 

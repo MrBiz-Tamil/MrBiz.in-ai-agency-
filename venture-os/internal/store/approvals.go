@@ -200,7 +200,15 @@ func (s *PG) DecideApproval(ctx context.Context, tenant, id uuid.UUID, approve b
 		}
 		a, err = scanApproval(tx.QueryRow(ctx,
 			`SELECT `+approvalCols+` FROM approval_queue a LEFT JOIN organizations o ON o.id=a.tenant_id WHERE a.tenant_id=$1 AND a.id=$2`, tenant, id))
-		return err
+		if err != nil {
+			return err
+		}
+		// The decision and its record commit together: an approval can never exist without the audit row that says who made it.
+		action := "approval.reject"
+		if approve {
+			action = "approval.approve"
+		}
+		return auditInTx(ctx, tx, tenant, "USER", by, action, "approval", id.String(), map[string]any{"kind": a.Kind, "note": note})
 	})
 	return a, err
 }

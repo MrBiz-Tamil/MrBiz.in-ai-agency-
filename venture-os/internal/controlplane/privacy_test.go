@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -175,5 +176,42 @@ func TestMoneyAndNumbersInAgentResultsKeepTheirExactValues(t *testing.T) {
 	got := crmCall(t, b, "crm_get_company", `{"company_id":"`+company+`"}`)
 	if !strings.Contains(got, "999999999999999") {
 		t.Errorf("a large amount was altered by the screening pass:\n%s", got)
+	}
+}
+
+// HTTP says the authentication scheme is case-insensitive: "bearer <token>" is a valid Authorization header. Both the user
+// (OIDC) path and the agent (MCP token) path used to refuse anything but exactly "Bearer ".
+func TestBearerSchemeIsCaseInsensitiveOnBothAuthPaths(t *testing.T) {
+	e := newEnv(t)
+	b := goLive(t, e, "tok-founder", "bearer-case")
+	mcp, err := e.signer.Mint(b.uuid, "sales", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(path, auth string) int {
+		req, _ := http.NewRequest(http.MethodPost, e.url+path, strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, scheme := range []string{"Bearer", "bearer", "BEARER"} {
+		if got := call("/venture.tenant.v1.TenantService/ListBusinesses", scheme+" tok-founder"); got != http.StatusOK {
+			t.Errorf("user path, scheme %q: status %d", scheme, got)
+		}
+		if got := call("/venture.agent.v1.AgentService/ListPricingRules", scheme+" "+mcp); got != http.StatusOK {
+			t.Errorf("agent path, scheme %q: status %d", scheme, got)
+		}
+	}
+	for _, bad := range []string{"", "Basic dG9rLWZvdW5kZXI=", "Bearer", "Bearer ", "Token tok-founder"} {
+		if got := call("/venture.tenant.v1.TenantService/ListBusinesses", bad); got != http.StatusUnauthorized {
+			t.Errorf("user path, header %q: status %d, want 401", bad, got)
+		}
 	}
 }

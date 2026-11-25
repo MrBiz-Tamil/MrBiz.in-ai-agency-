@@ -216,6 +216,16 @@ func (s *Server) internal(what string, err error) error {
 	return connect.NewError(connect.CodeInternal, errors.New("internal error"))
 }
 
+// auditUser records an action by a person. It is for actions that have already taken effect and cannot sensibly be undone
+// because their record failed to write (connecting a provider, approving a blueprint): the failure is logged with enough
+// to find the gap, never dropped silently. Where a missing record would defeat the point of auditing the action (approving
+// money, changing a spend cap) the row is written in the action's own transaction instead (internal/store).
+func (s *Server) auditUser(ctx context.Context, tenant uuid.UUID, sub, action, entityType, entityID string, data map[string]any) {
+	if err := s.Repo.AuditUser(ctx, tenant, sub, action, entityType, entityID, data); err != nil {
+		s.log().Error("audit write failed", "tenant", tenant, "actor", sub, "action", action, "entity", entityType+":"+entityID, "err", err)
+	}
+}
+
 func parseID(field, v string) (uuid.UUID, error) {
 	id, err := uuid.Parse(v)
 	if err != nil || id == uuid.Nil {
@@ -250,7 +260,7 @@ func (s *tenantSvc) CreateBusiness(ctx context.Context, req *connect.Request[ten
 		return nil, s.internal("create tenant", err)
 	}
 	if created {
-		_ = s.Repo.AuditUser(ctx, id, p.Sub, "tenant.create", "tenant", id.String(), nil)
+		s.auditUser(ctx, id, p.Sub, "tenant.create", "tenant", id.String(), nil)
 	}
 	return connect.NewResponse(&tenantv1.CreateBusinessResponse{TenantId: id.String(), Created: created}), nil
 }
@@ -420,7 +430,7 @@ func (s *genesisSvc) SubmitBlueprint(ctx context.Context, req *connect.Request[g
 	if err != nil {
 		return nil, s.internal("submit: save", err)
 	}
-	_ = s.Repo.AuditUser(ctx, tenant, p.Sub, "blueprint.submit", "blueprint", sb.ID.String(), map[string]any{"version": sb.Version})
+	s.auditUser(ctx, tenant, p.Sub, "blueprint.submit", "blueprint", sb.ID.String(), map[string]any{"version": sb.Version})
 	return connect.NewResponse(&genesisv1.SubmitBlueprintResponse{
 		BlueprintId: sb.ID.String(), Version: int32(sb.Version), ContentHash: hexHash(sb.Hash), Status: sb.Status,
 	}), nil
@@ -478,7 +488,7 @@ func (s *genesisSvc) ApproveBlueprint(ctx context.Context, req *connect.Request[
 	case err != nil:
 		return nil, s.internal("approve", err)
 	}
-	_ = s.Repo.AuditUser(ctx, tenant, p.Sub, "blueprint.approve", "blueprint", id.String(), map[string]any{"content_hash": hexHash(approved.Hash)})
+	s.auditUser(ctx, tenant, p.Sub, "blueprint.approve", "blueprint", id.String(), map[string]any{"content_hash": hexHash(approved.Hash)})
 	return connect.NewResponse(&genesisv1.ApproveBlueprintResponse{BlueprintId: approved.ID.String(), Status: approved.Status}), nil
 }
 

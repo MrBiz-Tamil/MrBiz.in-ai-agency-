@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mrbiz/venture-os/gen/venture/agent/v1/agentv1connect"
+	"github.com/mrbiz/venture-os/internal/bearer"
 	"github.com/mrbiz/venture-os/internal/mcptoken"
 	"github.com/mrbiz/venture-os/internal/ratelimit"
 )
@@ -118,9 +119,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this MCP server only accepts POST", http.StatusMethodNotAllowed)
 		return
 	}
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	token = strings.TrimSpace(token)
-	if !ok || token == "" {
+	token, ok := bearer.Token(r.Header.Get("Authorization"))
+	if !ok {
 		unauthorized(w)
 		return
 	}

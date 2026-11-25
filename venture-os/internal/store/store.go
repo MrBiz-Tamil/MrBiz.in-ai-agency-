@@ -636,6 +636,23 @@ func (s *PG) AuditActor(ctx context.Context, tenant uuid.UUID, actorType, actorI
 	})
 }
 
+// auditInTx appends an audit row inside the caller's transaction, so the action it records and the record of it commit or
+// roll back together. Use it for the actions where a missing record would defeat the point of auditing them (approving money,
+// changing a safety ceiling); AuditActor, which runs in its own transaction, is for the rest.
+func auditInTx(ctx context.Context, tx pgx.Tx, tenant uuid.UUID, actorType, actorID, action, entityType, entityID string, data map[string]any) error {
+	if data == nil {
+		data = map[string]any{}
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx,
+		`INSERT INTO audit_logs (tenant_id, actor_type, actor_id, action, entity_type, entity_id, data)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`, tenant, actorType, actorID, action, entityType, entityID, raw)
+	return err
+}
+
 // ───────────────────────────── seeding ─────────────────────────────
 
 // SeedTenant writes the blueprint into the tenant's own tables, atomically and idempotently. It refuses to run

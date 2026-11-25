@@ -8,11 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/coreos/go-oidc/v3/oidc"
+
+	"github.com/mrbiz/venture-os/internal/bearer"
 )
 
 // Principal is an authenticated caller.
@@ -92,11 +93,11 @@ func Interceptor(v Verifier) connect.Interceptor {
 	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 			h := req.Header().Get("Authorization")
-			token, ok := strings.CutPrefix(h, "Bearer ")
-			if !ok || strings.TrimSpace(token) == "" {
+			token, ok := bearer.Token(h)
+			if !ok {
 				return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("missing bearer token"))
 			}
-			p, err := v.Verify(ctx, strings.TrimSpace(token))
+			p, err := v.Verify(ctx, token)
 			if err != nil {
 				return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid token"))
 			}

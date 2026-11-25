@@ -80,9 +80,27 @@ func (s *PG) SpendCaps(ctx context.Context, tenant uuid.UUID) ([]SpendCap, error
 // SetSpendCap creates or replaces the cap for one currency. Setting all three ceilings to nil removes the caps.
 func (s *PG) SetSpendCap(ctx context.Context, tenant uuid.UUID, c SpendCap) error {
 	return s.tenantTx(ctx, tenant, func(tx pgx.Tx) error {
-		if c.PerTransaction == nil && c.PerHour == nil && c.PerDay == nil {
-			_, err := tx.Exec(ctx, `DELETE FROM spend_caps WHERE tenant_id=$1 AND currency=$2`, tenant, c.Currency)
+		// A change to a safety ceiling is audited in the same transaction, with what it was and what it became, so a cap can
+		// never be raised without the record that says who raised it.
+		before := map[string]any{}
+		var perTx, perHour, perDay *int64
+		switch err := tx.QueryRow(ctx, `SELECT per_transaction_minor, per_hour_minor, per_day_minor FROM spend_caps WHERE tenant_id=$1 AND currency=$2`,
+			tenant, c.Currency).Scan(&perTx, &perHour, &perDay); {
+		case err == nil:
+			before = map[string]any{"per_transaction": perTx, "per_hour": perHour, "per_day": perDay}
+		case !errors.Is(err, pgx.ErrNoRows):
 			return err
+		}
+		after := map[string]any{"per_transaction": c.PerTransaction, "per_hour": c.PerHour, "per_day": c.PerDay}
+		audit := func() error {
+			return auditInTx(ctx, tx, tenant, "USER", c.UpdatedBy, "spend_cap.set", "spend_cap", c.Currency, map[string]any{"before": before, "after": after})
+		}
+
+		if c.PerTransaction == nil && c.PerHour == nil && c.PerDay == nil {
+			if _, err := tx.Exec(ctx, `DELETE FROM spend_caps WHERE tenant_id=$1 AND currency=$2`, tenant, c.Currency); err != nil {
+				return err
+			}
+			return audit()
 		}
 		_, err := tx.Exec(ctx,
 			`INSERT INTO spend_caps (tenant_id, currency, per_transaction_minor, per_hour_minor, per_day_minor, updated_by) VALUES ($1,$2,$3,$4,$5,$6)
@@ -92,7 +110,10 @@ func (s *PG) SetSpendCap(ctx context.Context, tenant uuid.UUID, c SpendCap) erro
 		if code, _ := pgCode(err); code == "23514" {
 			return fmt.Errorf("%w: caps must be non-negative and per-transaction <= per-hour <= per-day", ErrConflict)
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return audit()
 	})
 }
 

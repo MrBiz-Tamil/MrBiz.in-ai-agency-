@@ -424,7 +424,9 @@ rolling day, any of which may be absent. Only approved `PAYMENT` and `PURCHASE_O
 totals; pending and rejected ones do not. The check runs **inside the `DecideApproval` transaction under a per-tenant
 advisory lock**, so two approvers clicking at once cannot both fit under a cap that only one fits under. A refusal
 applies to founders too, names the limit that tripped, and leaves the item pending. Limits must be ordered (payment
-at most hour at most day) and every change is audited. Once a business has set a cap in any currency, an approval in a
+at most hour at most day) and every change is audited. The audit row for an approval decision and for a cap change is written
+in the **same transaction** as the action (before and after values for a cap), so neither can happen without its record; other
+human actions are audited just after they take effect, and a failed write is logged with the action and actor, never dropped. Once a business has set a cap in any currency, an approval in a
 currency with **no** cap row is refused too (an agent chooses a `PAYMENT`'s currency, so an uncapped currency would otherwise
 bypass every ceiling); a business with no caps at all is unrestricted. `CAMPAIGN` and `OTHER` approvals are not capped.
 

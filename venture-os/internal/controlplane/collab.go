@@ -217,7 +217,7 @@ func (s *connectionSvc) Connect(ctx context.Context, req *connect.Request[connec
 		}
 		return nil, s.collabErr("connect", err)
 	}
-	_ = s.Repo.AuditUser(ctx, tenant, p.Sub, "connection.connect", "connection", req.Msg.Provider, map[string]any{"provider": req.Msg.Provider})
+	s.auditUser(ctx, tenant, p.Sub, "connection.connect", "connection", req.Msg.Provider, map[string]any{"provider": req.Msg.Provider})
 	cs, err := s.Collab.List(ctx, tenant)
 	if err != nil {
 		return nil, s.internal("connections: list", err)
@@ -241,7 +241,7 @@ func (s *connectionSvc) Disconnect(ctx context.Context, req *connect.Request[con
 	if err := s.Collab.Disconnect(ctx, tenant, req.Msg.Provider); err != nil {
 		return nil, s.collabErr("disconnect", err)
 	}
-	_ = s.Repo.AuditUser(ctx, tenant, p.Sub, "connection.disconnect", "connection", req.Msg.Provider, map[string]any{"provider": req.Msg.Provider})
+	s.auditUser(ctx, tenant, p.Sub, "connection.disconnect", "connection", req.Msg.Provider, map[string]any{"provider": req.Msg.Provider})
 	return connect.NewResponse(&connectionv1.DisconnectResponse{}), nil
 }
 
@@ -284,7 +284,7 @@ func (s *controlsSvc) SetSpendCap(ctx context.Context, req *connect.Request[cont
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%s must be between 0 and 10^15", name))
 		}
 	}
-	before, _ := s.Repo.SpendCaps(ctx, tenant)
+	// The audit row (with what the cap was and what it became) is written in the same transaction as the change.
 	err = s.Repo.SetSpendCap(ctx, tenant, store.SpendCap{Currency: c.Currency, PerTransaction: c.PerTransactionMinor, PerHour: c.PerHourMinor, PerDay: c.PerDayMinor, UpdatedBy: p.Sub})
 	if errors.Is(err, store.ErrConflict) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("caps must satisfy per-transaction <= per-hour <= per-day"))
@@ -292,15 +292,6 @@ func (s *controlsSvc) SetSpendCap(ctx context.Context, req *connect.Request[cont
 	if err != nil {
 		return nil, s.internal("controls: set cap", err)
 	}
-	// A change to a safety ceiling is itself audited, with what it was and what it became.
-	old := map[string]any{}
-	for _, b := range before {
-		if b.Currency == c.Currency {
-			old = map[string]any{"per_transaction": b.PerTransaction, "per_hour": b.PerHour, "per_day": b.PerDay}
-		}
-	}
-	_ = s.Repo.AuditUser(ctx, tenant, p.Sub, "spend_cap.set", "spend_cap", c.Currency, map[string]any{
-		"before": old, "after": map[string]any{"per_transaction": c.PerTransactionMinor, "per_hour": c.PerHourMinor, "per_day": c.PerDayMinor}})
 	caps, err := s.Repo.SpendCaps(ctx, tenant)
 	if err != nil {
 		return nil, s.internal("controls: caps", err)

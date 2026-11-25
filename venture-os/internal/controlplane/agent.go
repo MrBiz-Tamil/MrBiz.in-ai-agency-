@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	agentv1 "github.com/mrbiz/venture-os/gen/venture/agent/v1"
+	"github.com/mrbiz/venture-os/internal/bearer"
 	"github.com/mrbiz/venture-os/internal/financeengine"
 	"github.com/mrbiz/venture-os/internal/mcptoken"
 	"github.com/mrbiz/venture-os/internal/store"
@@ -24,11 +25,11 @@ type agentCtxKey struct{}
 func mcpInterceptor(signer *mcptoken.Signer) connect.Interceptor {
 	return connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-			token, ok := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
-			if !ok || strings.TrimSpace(token) == "" {
+			token, ok := bearer.Token(req.Header().Get("Authorization"))
+			if !ok {
 				return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("missing bearer token"))
 			}
-			claims, err := signer.Verify(strings.TrimSpace(token))
+			claims, err := signer.Verify(token)
 			if err != nil {
 				return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid token"))
 			}
