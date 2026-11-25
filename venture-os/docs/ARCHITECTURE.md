@@ -391,8 +391,11 @@ work**; disconnecting deletes them.
 
 **One HTTP client** (`internal/httpx`) is used by every adapter: token-bucket rate limit, retries only when repeating is
 safe (idempotent methods, or a call explicitly marked idempotent; a 429 is always safe to wait out), `Retry-After`
-honoured and shared across callers, a circuit breaker, no redirects to another host, bounded response bodies, and error
-text scrubbed of credentials. Errors wrap the HTTP status so callers can decide without parsing strings. Incoming
+honoured and shared across callers, a circuit breaker, no redirects to another host, bounded response bodies, error
+text scrubbed of credentials, and a refusal of any request path containing a `.` or `..` segment (`url.PathEscape` leaves
+dots alone, so an agent-supplied id could otherwise redirect a call to another endpoint with the business's credentials).
+Adapters also validate agent-supplied ids before they reach a path: Zoom (integer), Notion (UUID), Google Calendar
+(`[A-Za-z0-9_-]`). Errors wrap the HTTP status so callers can decide without parsing strings. Incoming
 webhooks (none are exposed yet) have a verifier in `internal/webhook`: HMAC, replay window and de-duplication.
 
 **Secrets** (`internal/vault`): each tenant's provider credentials are sealed with AES-256-GCM, bound to the tenant and

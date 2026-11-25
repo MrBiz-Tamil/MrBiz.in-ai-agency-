@@ -211,6 +211,14 @@ func (c *Client) buildURL(r Request) (string, error) {
 	if strings.Contains(r.Path, "://") || strings.HasPrefix(r.Path, "//") {
 		return "", fmt.Errorf("httpx: %s: path %q must be relative", c.cfg.Provider, r.Path)
 	}
+	// A "." or ".." segment is read by a server as "this" or "the parent directory", so an id that reached a path unescaped
+	// (url.PathEscape leaves dots alone) could redirect the call to another endpoint with this provider's credentials. No
+	// legitimate request has one, so refuse it here for every connector, whatever its callers validated.
+	for _, seg := range strings.Split(r.Path, "/") {
+		if seg == "." || seg == ".." {
+			return "", fmt.Errorf("httpx: %s: path %q contains a dot segment", c.cfg.Provider, r.Path)
+		}
+	}
 	u := *c.base
 	u.Path = strings.TrimRight(c.base.Path, "/") + "/" + strings.TrimLeft(r.Path, "/")
 	if r.Query != nil {

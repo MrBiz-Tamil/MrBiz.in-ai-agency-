@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -337,10 +338,23 @@ func pending(e event) bool {
 		e.Conference.CreateRequest.Status.StatusCode == "pending"
 }
 
+// eventIDRe is the alphabet of the event ids this adapter creates (base32hex) and of the ids Google returns, including a
+// recurring instance's "<id>_<20260101T100000Z>". It deliberately excludes ".", "/" and anything else with meaning in a
+// URL path: the id comes from an agent, and url.PathEscape leaves "." and ".." alone, which a server reads as "the parent
+// directory" (so DELETE .../events/.. would address the calendar itself).
+var eventIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func validEventID(id string) error {
+	if len(id) > 1024 || !eventIDRe.MatchString(id) { // Google allows up to 1,024 characters (RE2 caps a repeat count at 1,000)
+		return fmt.Errorf("%w: %q is not a Google Calendar event id", collab.ErrInvalid, id)
+	}
+	return nil
+}
+
 // Get reads an event.
 func (c *Client) Get(ctx context.Context, id string) (collab.Meeting, error) {
-	if id == "" {
-		return collab.Meeting{}, fmt.Errorf("%w: an event id is required", collab.ErrInvalid)
+	if err := validEventID(id); err != nil {
+		return collab.Meeting{}, err
 	}
 	resp, err := c.call(ctx, httpx.Request{Path: c.eventPath(id)})
 	if err != nil {
@@ -358,8 +372,8 @@ func (c *Client) Get(ctx context.Context, id string) (collab.Meeting, error) {
 
 // Cancel deletes the event. notify controls whether Google emails the attendees. An absent event counts as done.
 func (c *Client) Cancel(ctx context.Context, id string, notify bool) error {
-	if id == "" {
-		return fmt.Errorf("%w: an event id is required", collab.ErrInvalid)
+	if err := validEventID(id); err != nil {
+		return err
 	}
 	send := "none"
 	if notify {
