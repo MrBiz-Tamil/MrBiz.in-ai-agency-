@@ -1,4 +1,0 @@
--r requirements.txt
-grpcio-tools==1.85.3
-pytest==9.2.0
-pytest-asyncio==1.5.0

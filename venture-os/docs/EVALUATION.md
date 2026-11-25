@@ -4,10 +4,12 @@ This replaces the pros-and-cons text that was circulating for "Mrbiz.in / ABOS".
 is planned. This document separates them. Every row says **Built**, **Partly built** or **Roadmap**, and says how it
 was checked.
 
-Two code bases are involved and they must not be confused:
+Two code bases were involved and must not be confused:
 
-* **ABOS** (`backend-core`, `ai-service`, `frontend`): the older code. It was read, not changed, and its tests were not run.
-* **Venture OS** (`venture-os/`): the newer code, where all of the fixes below were made.
+* **ABOS** (`backend-core`, `ai-service`, `frontend`): the older prototype. It has since been **removed** from the
+  repository (still in git history at commit `6198fcd`). Section 1 records what its code did and did not support when it
+  was read; its tests were not run at the time of that reading.
+* **Venture OS** (`venture-os/`): the current code, where all of the fixes below were made.
 
 How to read "tested": almost everything here is tested against **in-process fakes** of the outside world (a fake Google,
 a fake Zoom, a fake Notion, fake speech and telephony), or against PostgreSQL through PGlite. A fake that I wrote from

@@ -1,8 +1,8 @@
 // Package testdb gives integration tests a real PostgreSQL with db/schema.sql applied.
 //
 // It uses VENTURE_TEST_DATABASE_URL if set (a Postgres 15+ superuser URL; the roles and schema are created in
-// it, so point it at a throwaway database). Otherwise it starts the in-process PGlite server shipped with the
-// sibling ABOS tree (../tools/pgtest) when node and its dependencies exist, and skips the test when neither
+// it, so point it at a throwaway database). Otherwise it starts the in-process PGlite server in tools/pgtest
+// when node and its dependencies exist, and skips the test when neither
 // is available. PGlite has no extensions, which is why schema.sql and schema_crm.sql need none; schema_rag.sql
 // (pgvector) is not applied here.
 package testdb
@@ -48,9 +48,9 @@ func url(t *testing.T) string {
 	if err != nil {
 		t.Skip("no VENTURE_TEST_DATABASE_URL and node not installed; skipping Postgres integration test")
 	}
-	dir := filepath.Join(moduleRoot(), "..", "tools", "pgtest")
+	dir := filepath.Join(moduleRoot(), "tools", "pgtest")
 	if _, err := os.Stat(filepath.Join(dir, "node_modules", "@electric-sql")); err != nil {
-		t.Skip("../tools/pgtest dependencies not installed (cd tools/pgtest && npm install); skipping Postgres integration test")
+		t.Skip("tools/pgtest dependencies not installed (cd tools/pgtest && npm install); skipping Postgres integration test")
 	}
 	port, err := freePort()
 	if err != nil {

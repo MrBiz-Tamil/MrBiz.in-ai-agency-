@@ -3,7 +3,7 @@
   Runs the whole Venture OS Command Center locally with no Docker, no Keycloak and no API key.
 .DESCRIPTION
   Starts three processes and stops all of them when you press Ctrl+C:
-    1. an in-process PostgreSQL (PGlite from ../tools/pgtest)          127.0.0.1:25499
+    1. an in-process PostgreSQL (PGlite from tools/pgtest)             127.0.0.1:25499
     2. the control plane on that database, with fake external systems   127.0.0.1:8080
     3. the SvelteKit Command Center with authentication bypassed         http://127.0.0.1:5190
   Provisioning is SIMULATED and sign-in is skipped. This is for development and demos only.
@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$pgtest = Join-Path (Split-Path -Parent $root) "tools\pgtest"
+$pgtest = Join-Path $root "tools\pgtest"
 $web = Join-Path $root "web"
 
 foreach ($tool in "node", "npm", "go") {

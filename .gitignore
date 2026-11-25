@@ -1,7 +1,6 @@
 # Build artifacts
 *.exe
 *.exe~
-backend-core/server
 dist/
 build/
 
@@ -21,5 +20,4 @@ __pycache__/
 .env
 .env.*
 !.env.example
-deploy/.env
-tools/pgtest/.data/
+venture-os/tools/pgtest/.data/

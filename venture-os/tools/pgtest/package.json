@@ -1,0 +1,11 @@
+{
+  "name": "venture-pgtest",
+  "private": true,
+  "type": "module",
+  "description": "Real Postgres (PGlite, in-process WASM) exposed over the wire protocol, for running migrations and DB integration tests without Docker.",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "@electric-sql/pglite-socket": "0.0.19"
+  }
+}

@@ -4,8 +4,8 @@ Venture OS is a multi-tenant, AI-native business operating system. A founder des
 conversation; the platform designs the operating model, provisions an isolated workspace (`tenant_id`) across
 ERP / CRM / Support / Agents, hires an AI org chart, and runs daily operations behind human approval gates.
 
-> This directory is self-contained and lives beside the pre-existing ABOS code (`backend-core/`, `ai-service/`,
-> `frontend/`, `deploy/`) without touching it. Nothing here imports from or modifies those trees.
+> This directory is self-contained. The earlier ABOS prototype (`backend-core/`, `ai-service/`, `frontend/`) was removed
+> from the repository; it remains in git history at commit `6198fcd`.
 
 ## 1. Monorepo layout
 
@@ -459,3 +459,13 @@ caller (caller ID is spoofable), so the responder must not treat a caller as aut
 
 Not built: speech or voice providers, telephony or WebRTC, triggers (such as cart recovery), calling-hours and consent
 rules, and the link from the responder to the agent tools. Latency is measured only against fakes; no real figure exists.
+
+## 14. Privacy filter (`internal/dlp`)
+
+Cleans text that comes from outside the business before an agent or a log sees it: redacts cards, Aadhaar, PAN, e-mail, Indian
+mobile numbers and credentials; withholds text containing prompt-injection phrases; and quarantines what is left in an
+`<untrusted_context>` block with markup escaped. Detection runs after Unicode normalisation, so look-alike letters, invisible
+characters and non-Latin digits do not hide data. It is a heuristic first line of defence, **not** a security boundary: the real
+controls are that agents have no money-moving tool without a human approval and that tools take no tenant argument. The package is
+built and tested but **not yet connected to anything**; see [DLP.md](DLP.md) for what it does and does not catch, how it differs
+from the earlier Python version, and which text it should (and should not) be applied to.

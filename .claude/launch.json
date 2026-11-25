@@ -2,37 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "ai-service",
-      "runtimeExecutable": "powershell",
-      "runtimeArgs": [
-        "-NoProfile",
-        "-Command",
-        "Set-Location 'D:\\Project Files\\Mrbiz.in\\ai-service'; $env:ABOS_ENV='dev'; .\\.venv\\Scripts\\python.exe grpc_server\\server.py"
-      ],
-      "port": 50051
-    },
-    {
-      "name": "backend",
-      "runtimeExecutable": "powershell",
-      "runtimeArgs": [
-        "-NoProfile",
-        "-Command",
-        "Set-Location 'D:\\Project Files\\Mrbiz.in\\backend-core'; $env:ABOS_ENV='dev'; $env:ABOS_DB_ROLE='abos_app'; $env:DATABASE_URL='postgres://postgres@127.0.0.1:25432/postgres?sslmode=disable&pool_max_conns=1&default_query_exec_mode=describe_exec'; go run ./cmd/server"
-      ],
-      "port": 8080
-    },
-    {
-      "name": "frontend",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "--prefix",
-        "D:\\Project Files\\Mrbiz.in\\frontend",
-        "run",
-        "dev"
-      ],
-      "port": 3000
-    },
-    {
       "name": "venture-web",
       "runtimeExecutable": "powershell",
       "runtimeArgs": [

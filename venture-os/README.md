@@ -23,6 +23,7 @@ Architecture, tenancy model and network zones: [docs/ARCHITECTURE.md](docs/ARCHI
 | 10 | Spend caps and tamper-evident audit | Hard per-payment, hourly and daily caps per currency, enforced inside the approval transaction; a hash-chained audit log with a verify button. Both run on a real PostgreSQL 16 as well as PGlite, and the cap race test fails when the lock is removed (checked on that server). The chain cannot detect deletion of the newest rows unless you keep its head fingerprint elsewhere. See §12 |
 | 11 | Voice call core | Barge-in, handoff, limits and latency measurement behind interfaces, tested with fakes. **No speech provider, no telephony, no real latency figure.** See §13 |
 | 12 | Agent work queue (schema and fake runner) | `db/schema_tasks.sql` (schema version 5): tasks, append-only history, schedules, a state machine and limits enforced by the database, and a claim function for many dispatchers. `internal/agentrun`: the `Runner` interface, a fake runner and a contract suite. Tested on PGlite and real PostgreSQL 16; 22 planted SQL bugs and 8 in the fake were caught by tests (some only after the tests were strengthened). **Not built:** the Go store, dispatcher, API, screens and the Hermes runner; Hermes itself has never been run (see docs/HERMES-SPIKE.md). See docs/AGENT-TASKS-DESIGN.md |
+| 13 | Privacy filter | `internal/dlp`: a Go filter (ported from the removed ABOS prototype) that redacts cards, Aadhaar, PAN, e-mail, Indian mobile numbers and credentials, screens for prompt injection and quarantines outsider text. Fixes several gaps in the original (formats, look-alike characters, non-Latin digits, cards hidden among other digits). Tested with fuzzing and planted bugs. **Not yet called by anything**: where to apply it is a decision (docs/DLP.md) |
 
 What is built versus planned, claim by claim: [docs/EVALUATION.md](docs/EVALUATION.md). Commerce connectors (Shopify, Amazon SP-API, Razorpay, Shiprocket, Odoo) are **not built**.
 
@@ -41,7 +42,7 @@ Sign-in is bypassed and provisioning is simulated; a banner says so. Never expos
 
 ```powershell
 cd venture-os
-go test ./...      # needs node + ../tools/pgtest deps for the DB tests; they skip cleanly without them
+go test ./...      # needs node + tools/pgtest deps (cd tools/pgtest; npm ci) for the DB tests; they skip cleanly without them
 cd web; npm ci; npm test; npm run check   # Command Center: 87 unit/integration tests + svelte-check
 ```
 
@@ -85,7 +86,7 @@ and `web` (step 6). Start the control plane with `docker compose --profile core 
   (YAML parse, anchors/merge keys, shell syntax, JSON), not booted. Expect to fix small things on first boot.
 * **Hermes is built from a git tag**, not pulled as an image (no verified upstream image). Pin
   `HERMES_REF` to a commit SHA and push images to your own registry for production.
-* **Existing ABOS code is untouched.** `venture-os/` is a sibling of `backend-core/`, `frontend/`, etc.
+* **The ABOS prototype is gone.** It was removed from the repository; commit `6198fcd` still holds it.
 * **Secrets:** `.env` is gitignored. Regenerating it against existing volumes locks you out of the databases —
   `gen-env` refuses to overwrite unless forced.
 * **Hardening still to do for production:** restrict Keycloak `/admin` at the edge, Redis per-service ACL users,
