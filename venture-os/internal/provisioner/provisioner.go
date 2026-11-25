@@ -316,6 +316,12 @@ func (p *Provisioner) Provision(ctx context.Context, req Request) (Result, error
 	if err != nil {
 		return Result{}, fmt.Errorf("provisioner: begin run: %w", err)
 	}
+	// An idempotency key names ONE command. BeginRun finds an earlier run by key alone, so without this check a key reused
+	// for a different blueprint would be answered with the old run's outcome (a "replayed success" for a blueprint that
+	// was never provisioned, or the old failure), or would resume the old run's steps under the new blueprint.
+	if run.BlueprintID != uuid.Nil && run.BlueprintID != req.BlueprintID {
+		return Result{}, fmt.Errorf("%w: idempotency key %q was already used to provision a different blueprint; use a new key", ErrInvalidRequest, req.IdempotencyKey)
+	}
 	if !claimed {
 		return p.replay(ctx, req, run)
 	}
