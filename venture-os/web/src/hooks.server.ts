@@ -1,4 +1,4 @@
-import { redirect, type Handle } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit';
 import { building } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { config } from '$lib/server/config';
@@ -30,6 +30,16 @@ function cookieOpts(secure: boolean, maxAge?: number) {
 	return { path: '/', httpOnly: true, sameSite: 'lax' as const, secure, ...(maxAge ? { maxAge } : {}) };
 }
 
+/** Security headers for every response we produce, including the early refusals and redirects below. */
+function harden(response: Response, secureCookies: boolean): Response {
+	response.headers.set('X-Content-Type-Options', 'nosniff');
+	response.headers.set('Referrer-Policy', 'same-origin');
+	response.headers.set('X-Frame-Options', 'DENY');
+	response.headers.set('Cache-Control', response.headers.get('Cache-Control') ?? 'private, no-store');
+	if (secureCookies) response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+	return response;
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
 	if (building) return resolve(event);
 	const cfg = config();
@@ -40,7 +50,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (!['GET', 'HEAD', 'OPTIONS'].includes(event.request.method)) {
 		const origin = event.request.headers.get('origin');
 		if (origin && origin !== cfg.origin && origin !== event.url.origin) {
-			return new Response('Cross-origin request refused', { status: 403 });
+			return harden(new Response('Cross-origin request refused', { status: 403 }), cfg.secureCookies);
 		}
 	}
 
@@ -75,19 +85,17 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const isPublic = PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p));
 	if (!event.locals.user && !isPublic) {
 		if (event.request.method !== 'GET' || event.request.headers.get('accept')?.includes('application/json')) {
-			return new Response(JSON.stringify({ code: 'Unauthenticated', message: 'Your session has expired. Please sign in again.' }), {
-				status: 401,
-				headers: { 'content-type': 'application/json' }
-			});
+			return harden(
+				new Response(JSON.stringify({ code: 'Unauthenticated', message: 'Your session has expired. Please sign in again.' }), {
+					status: 401,
+					headers: { 'content-type': 'application/json' }
+				}),
+				cfg.secureCookies
+			);
 		}
-		redirect(303, `/auth/login?returnTo=${encodeURIComponent(pathname + event.url.search)}`);
+		const to = `/auth/login?returnTo=${encodeURIComponent(pathname + event.url.search)}`;
+		return harden(new Response(null, { status: 303, headers: { location: to } }), cfg.secureCookies);
 	}
 
-	const response = await resolve(event);
-	response.headers.set('X-Content-Type-Options', 'nosniff');
-	response.headers.set('Referrer-Policy', 'same-origin');
-	response.headers.set('X-Frame-Options', 'DENY');
-	response.headers.set('Cache-Control', response.headers.get('Cache-Control') ?? 'private, no-store');
-	if (cfg.secureCookies) response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-	return response;
+	return harden(await resolve(event), cfg.secureCookies);
 };

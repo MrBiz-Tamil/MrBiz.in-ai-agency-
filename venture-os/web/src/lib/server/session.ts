@@ -81,9 +81,25 @@ export function needsRefresh(s: Session, nowSec = Math.floor(Date.now() / 1000),
 	return s.exp - skewSec <= nowSec;
 }
 
-/** Allows only same-site relative paths as post-login destinations (no open redirects). */
+const SENTINEL_ORIGIN = 'https://return-to.invalid';
+
+/**
+ * Allows only same-site relative paths as post-login destinations (no open redirects).
+ *
+ * Checking the string is not enough, because a browser does not read the Location header as a string: the WHATWG URL
+ * parser deletes tab, CR and LF anywhere in it and treats "\" like "/". So "/<TAB>/evil.example" is "//evil.example" to
+ * a browser. Control characters are therefore refused outright, and the value must also resolve on the same origin
+ * when parsed the way a browser parses it. The original text is returned (not the parser's normalised form, which can
+ * turn "/.//x" into the protocol-relative "//x").
+ */
 export function safeReturnTo(raw: string | null | undefined): string {
-	if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\') || /[\r\n]/.test(raw)) return '/';
+	if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return '/';
+	if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(raw)) return '/'; // control characters (tab, CR, LF, DEL, C1) and line/paragraph separators
 	if (raw.startsWith('/auth/')) return '/';
+	try {
+		if (new URL(raw, SENTINEL_ORIGIN).origin !== SENTINEL_ORIGIN) return '/';
+	} catch {
+		return '/';
+	}
 	return raw;
 }
