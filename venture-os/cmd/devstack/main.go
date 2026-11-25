@@ -39,6 +39,7 @@ import (
 	"github.com/mrbiz/venture-os/internal/crm"
 	"github.com/mrbiz/venture-os/internal/crm/builtin"
 	"github.com/mrbiz/venture-os/internal/devdb"
+	"github.com/mrbiz/venture-os/internal/dlp"
 	"github.com/mrbiz/venture-os/internal/fakes"
 	"github.com/mrbiz/venture-os/internal/fixtures"
 	"github.com/mrbiz/venture-os/internal/genesis"
@@ -117,7 +118,7 @@ func run(log *slog.Logger) error {
 
 	srv := &controlplane.Server{
 		Repo: st, Interviewer: &genesis.Engine{LLM: llm, Model: env("GENESIS_MODEL", "claude-sonnet-5-5")},
-		Provisioner: prov, AgentSigner: signer, CRM: crmProvider, Collab: collabReg, Log: log,
+		Provisioner: prov, AgentSigner: signer, CRM: crmProvider, Collab: collabReg, Privacy: dlp.New(), Log: log,
 	}
 	verifier := auth.StaticVerifier{"dev-founder": "sub-dev-founder", "dev-approver": "sub-dev-approver", "dev-viewer": "sub-dev-viewer"}
 	httpSrv := &http.Server{

@@ -34,7 +34,7 @@ import (
 )
 
 // newProbeEnv is newEnv with the repository wrapped, so a test can inject faults.
-func newProbeEnv(t *testing.T, wrap func(controlplane.Repo) controlplane.Repo) *env {
+func newProbeEnv(t *testing.T, wrap func(controlplane.Repo) controlplane.Repo, opts ...func(*controlplane.Server)) *env {
 	t.Helper()
 	pool := testdb.Pool(t)
 	st := store.New(pool, testdb.Role)
@@ -49,6 +49,9 @@ func newProbeEnv(t *testing.T, wrap func(controlplane.Repo) controlplane.Repo) *
 	srv := &controlplane.Server{CRM: builtin.New(pool, tenancy.Options{AssumeRole: testdb.Role}), Repo: wrap(st),
 		Interviewer: &genesis.Engine{LLM: llm, Model: "m"}, Provisioner: prov, AgentSigner: signer,
 		Now: func() time.Time { return time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC) }}
+	for _, o := range opts {
+		o(srv)
+	}
 	ts := httptest.NewServer(srv.Handler(auth.StaticVerifier{
 		"tok-founder": "sub-founder", "tok-other": "sub-other", "tok-viewer": "sub-viewer", "tok-approver": "sub-approver",
 	}))

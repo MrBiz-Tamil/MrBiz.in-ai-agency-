@@ -58,6 +58,10 @@ func (s *agentSvc) CRMOperation(ctx context.Context, req *connect.Request[agentv
 	if err != nil {
 		return nil, err
 	}
+	// What an outsider typed in a note or task must not reach the agent as raw instructions or raw secrets.
+	if out, err = s.screenForAgent(ctx, t.ID, "crm", out); err != nil {
+		return nil, s.internal("crm privacy screen", err)
+	}
 	if !op.ReadOnly {
 		// Who did what, never the business data itself.
 		if err := s.Repo.AuditActor(ctx, t.ID, "AGENT", who, "crm."+op.Name, "crm", entity, map[string]any{}); err != nil {

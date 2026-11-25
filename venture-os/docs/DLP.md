@@ -4,8 +4,9 @@ A Go port of the removed ABOS prototype's `ai-service/security/dlp_shield.py` (s
 output format and several fixes. It
 cleans text that comes from outside the business before an agent or a log sees it.
 
-**Status: the package is written and tested. It is not yet called by anything.** Where to connect it is a decision, set out in
-the last section.
+**Status: the package is written and tested, and the control plane calls it on one path: the `subject` and `body` of CRM
+activities are screened before an agent reads them** (`internal/controlplane/privacy.go`; people in the Command Center see the
+original). Nothing else calls it yet; the last section says where it would go next.
 
 ## What it does
 
@@ -88,7 +89,7 @@ last twelve digits can look like an Aadhaar number and are redacted, as in the o
 * Not tested: real customer data, other languages' phrasing, and the race detector (this machine has no C toolchain for it; a
   `Shield` has no mutable state, so there is nothing to race on).
 
-## Where to connect it (a decision, not yet done)
+## Where to connect it
 
 Redacting everything everywhere would break the product: an agent that handles a customer needs that customer's phone number and
 e-mail from the CRM. So:
@@ -101,5 +102,13 @@ e-mail from the CRM. So:
 | Logs and error messages | **`Redact`** | No quarantine wrapper needed |
 | The founder's own messages to Genesis | No | Trusted, and the founder expects the model to see them |
 
-The first real use is the MCP bus's read tools for notes and activities and the work queue's untrusted goals. Wiring it there
-changes what agents see, so it needs the product decision above and a look at real tool results.
+**Done:** CRM activity `subject` and `body` on every agent CRM result (the first row, for the one path that carries outsider
+text to an agent today: the Notion tools return only titles and links, and no tool reads a page's text back). It is switched on
+by `Server.Privacy` and is on in the control plane and the dev stack. A withheld injection is logged and written to the audit
+log as `privacy.injection_withheld` with counts only, never the text. It fails closed: a result that cannot be screened is an
+error, not passed on raw. The screen decodes numbers exactly, so money is unchanged.
+
+**Not done:** the work queue's untrusted goals (the queue has no store, API or runner yet), support messages and webhook bodies
+(no connector delivers them to an agent yet), and `Redact` on logs. Each of these needs wiring when its feature exists. Company
+and deal names and custom fields are typed by customers too but are structured data an agent works with, so they are not
+screened; an injection placed there is the remaining gap on this path.

@@ -25,6 +25,7 @@ import (
 	"github.com/mrbiz/venture-os/internal/connectors"
 	"github.com/mrbiz/venture-os/internal/connectors/anthropic"
 	"github.com/mrbiz/venture-os/internal/controlplane"
+	"github.com/mrbiz/venture-os/internal/dlp"
 	"github.com/mrbiz/venture-os/internal/genesis"
 	"github.com/mrbiz/venture-os/internal/mcptoken"
 	"github.com/mrbiz/venture-os/internal/provisioner"
@@ -149,7 +150,8 @@ func run(log *slog.Logger) error {
 		Interviewer: &genesis.Engine{LLM: &anthropic.Client{APIKey: cfg.anthropicKey, DefaultModel: cfg.genesisModel}, Model: cfg.genesisModel},
 		Provisioner: prov,
 		CRM:         set.CRMData,
-		AgentSigner: signer, // verifies the per-tenant MCP tokens that authenticate AgentService calls
+		Privacy:     dlp.New(), // agents read customer-typed text only after it is screened (docs/DLP.md)
+		AgentSigner: signer,    // verifies the per-tenant MCP tokens that authenticate AgentService calls
 		Log:         log,
 	}
 	httpSrv := &http.Server{

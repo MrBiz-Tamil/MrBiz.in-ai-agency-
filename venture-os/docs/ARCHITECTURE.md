@@ -478,5 +478,7 @@ mobile numbers and credentials; withholds text containing prompt-injection phras
 `<untrusted_context>` block with markup escaped. Detection runs after Unicode normalisation, so look-alike letters, invisible
 characters and non-Latin digits do not hide data. It is a heuristic first line of defence, **not** a security boundary: the real
 controls are that agents have no money-moving tool without a human approval and that tools take no tenant argument. The package is
-built and tested but **not yet connected to anything**; see [DLP.md](DLP.md) for what it does and does not catch, how it differs
+built and tested and is connected on **one** path: the control plane (`Server.Privacy`, `internal/controlplane/privacy.go`)
+screens the `subject` and `body` of CRM activities before an AGENT reads them, while people in the Command Center read the
+original and structured fields (e-mail, phone) are left alone. Nothing else calls it yet. See [DLP.md](DLP.md) for what it does and does not catch, how it differs
 from the earlier Python version, and which text it should (and should not) be applied to.

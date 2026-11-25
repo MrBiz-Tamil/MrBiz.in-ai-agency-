@@ -33,6 +33,7 @@ import (
 	"github.com/mrbiz/venture-os/internal/auth"
 	"github.com/mrbiz/venture-os/internal/collabsvc"
 	"github.com/mrbiz/venture-os/internal/crm"
+	"github.com/mrbiz/venture-os/internal/dlp"
 	"github.com/mrbiz/venture-os/internal/domain"
 	"github.com/mrbiz/venture-os/internal/financeengine"
 	"github.com/mrbiz/venture-os/internal/genesis"
@@ -110,6 +111,10 @@ type Server struct {
 	Collab *collabsvc.Registry
 	// CRM serves the crm_ops tools. When nil the business has no CRM connected and those tools fail cleanly.
 	CRM crm.Provider
+	// Privacy, when set, screens the free text that outsiders typed (CRM activity subjects and bodies) before an AGENT
+	// reads it: personal data and credentials are redacted, prompt injections are withheld, the rest is quarantined as
+	// untrusted. Nil leaves agent results untouched. People in the Command Center always read the original text.
+	Privacy *dlp.Shield
 	// Now is the clock (defaults to time.Now); tests inject a fixed one.
 	Now func() time.Time
 }
